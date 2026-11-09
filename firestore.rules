@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Bootstrap the first administrator ONLY in the Firebase console:
+    // members/{exact Google login email} => { role: "admin" }
+    // Email addresses and member documents must never be put in the public repository.
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+    function role() {
+      return get(/databases/$(database)/documents/members/$(request.auth.token.email)).data.role;
+    }
+    function canRead() { return signedIn() && role() in ['viewer', 'editor', 'admin']; }
+    function canEdit() { return signedIn() && role() in ['editor', 'admin']; }
+    function admin() { return signedIn() && role() == 'admin'; }
+    function validState(d) {
+      return d.keys().hasAll(['version','rev','tables','attendees','updatedAt','updatedBy','lastAction'])
+        && d.keys().hasOnly(['version','rev','tables','attendees','updatedAt','updatedBy','lastAction'])
+        && d.version == 1 && d.rev is int && d.rev >= 1
+        && d.tables is list && d.tables.size() >= 1 && d.tables.size() <= 40
+        && d.attendees is list && d.attendees.size() <= 500
+        && d.updatedBy == request.auth.uid && d.updatedAt == request.time
+        && d.lastAction is string && d.lastAction.size() <= 160;
+    }
+    match /members/{email} {
+      allow get: if signedIn() && (email == request.auth.token.email || admin());
+      allow list: if admin();
+      allow create, update: if admin()
+        && request.resource.data.keys().hasOnly(['role'])
+        && request.resource.data.role in ['viewer','editor','admin'];
+      allow delete: if admin();
+    }
+    match /events/snu60 {
+      allow read: if canRead();
+      allow create: if canEdit() && validState(request.resource.data) && request.resource.data.rev == 1;
+      allow update: if canEdit() && validState(request.resource.data)
+        && request.resource.data.rev == resource.data.rev + 1;
+      allow delete: if false;
+      match /history/{entry} {
+        allow read: if canRead();
+        allow create: if canEdit()
+          && request.resource.data.keys().hasAll(['before','rev','action','by','at'])
+          && request.resource.data.keys().hasOnly(['before','rev','action','by','at'])
+          && request.resource.data.before is map
+          && request.resource.data.before.keys().hasOnly(['version','rev','tables','attendees'])
+          && request.resource.data.before.version == 1
+          && request.resource.data.before.rev is int
+          && request.resource.data.before.tables is list
+          && request.resource.data.before.tables.size() <= 40
+          && request.resource.data.before.attendees is list
+          && request.resource.data.before.attendees.size() <= 500
+          && request.resource.data.rev == request.resource.data.before.rev + 1
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.at == request.time
+          && request.resource.data.action is string && request.resource.data.action.size() <= 160
+          && getAfter(/databases/$(database)/documents/events/snu60).data.rev == request.resource.data.rev
+          && getAfter(/databases/$(database)/documents/events/snu60).data.updatedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
