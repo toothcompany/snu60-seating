@@ -1,0 +1,22 @@
+name: Check seating editor
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check JavaScript syntax
+        run: npm run check
+      - name: Test seating and import invariants
+        run: npm test
+      - name: Verify Firebase SDK URLs
+        run: |
+          for service in app auth firestore; do
+            curl --fail --silent --show-error --retry 2 "https://www.gstatic.com/firebasejs/13.2.0/firebase-${service}.js" -o /dev/null
+          done
