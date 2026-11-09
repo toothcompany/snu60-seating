@@ -1,0 +1,1 @@
+# snu60-seating
