@@ -1,17 +1,14 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // First administrator: create members/{exact Google login email} in the console.
-    // Never publish member emails, contact details, service credentials, or history.
+    // Existing administrator and legacy event data remain private.
     function signedIn() {
       return request.auth != null
         && request.auth.token.email is string
         && request.auth.token.email_verified == true
         && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
-    function role() {
-      return get(/databases/$(database)/documents/members/$(request.auth.token.email)).data.role;
-    }
+    function role() { return get(/databases/$(database)/documents/members/$(request.auth.token.email)).data.role; }
     function canRead() { return signedIn() && role() in ['viewer', 'editor', 'admin']; }
     function canEdit() { return signedIn() && role() in ['editor', 'admin']; }
     function admin() { return signedIn() && role() == 'admin'; }
@@ -35,8 +32,7 @@ service cloud.firestore {
     match /events/snu60 {
       allow read: if canRead();
       allow create: if canEdit() && validState(request.resource.data) && request.resource.data.rev == 1;
-      allow update: if canEdit() && validState(request.resource.data)
-        && request.resource.data.rev == resource.data.rev + 1;
+      allow update: if canEdit() && validState(request.resource.data) && request.resource.data.rev == resource.data.rev + 1;
       allow delete: if false;
       match /history/{entry} {
         allow read: if canRead();
@@ -47,36 +43,89 @@ service cloud.firestore {
           && request.resource.data.before.keys().hasOnly(['version','rev','tables','attendees'])
           && request.resource.data.before.version == 1
           && request.resource.data.before.rev is int
-          && request.resource.data.before.tables is list
-          && request.resource.data.before.tables.size() <= 40
-          && request.resource.data.before.attendees is list
-          && request.resource.data.before.attendees.size() <= 500
+          && request.resource.data.before.tables is list && request.resource.data.before.tables.size() <= 40
+          && request.resource.data.before.attendees is list && request.resource.data.before.attendees.size() <= 500
           && request.resource.data.rev == request.resource.data.before.rev + 1
-          && request.resource.data.by == request.auth.uid
-          && request.resource.data.at == request.time
+          && request.resource.data.by == request.auth.uid && request.resource.data.at == request.time
           && request.resource.data.action is string && request.resource.data.action.size() <= 160
           && getAfter(/databases/$(database)/documents/events/snu60).data.rev == request.resource.data.rev
           && getAfter(/databases/$(database)/documents/events/snu60).data.updatedBy == request.auth.uid;
         allow update, delete: if false;
       }
     }
-    // Only this sanitized projection is public. Member documents and history stay private.
     match /publicPlans/snu60 {
       allow get: if true;
       allow list: if false;
       allow create, update: if canEdit()
         && request.resource.data.keys().hasAll(['version','rev','tables','attendees','releaseId','publishedAt'])
         && request.resource.data.keys().hasOnly(['version','rev','tables','attendees','releaseId','publishedAt'])
-        && request.resource.data.version == 1
-        && request.resource.data.rev is int
-        && request.resource.data.rev >= 1
-        && request.resource.data.releaseId is string
-        && request.resource.data.releaseId.size() <= 80
+        && request.resource.data.version == 1 && request.resource.data.rev is int && request.resource.data.rev >= 1
+        && request.resource.data.releaseId is string && request.resource.data.releaseId.size() <= 80
         && request.resource.data.publishedAt == request.time
         && request.resource.data.rev == getAfter(/databases/$(database)/documents/events/snu60).data.rev
         && request.resource.data.tables == getAfter(/databases/$(database)/documents/events/snu60).data.tables
         && request.resource.data.attendees == getAfter(/databases/$(database)/documents/events/snu60).data.attendees;
       allow delete: if admin();
+    }
+
+    // User-authorized account-free collaboration, scoped ONLY to this public seating plan.
+    // Anonymous auth is automatic. It does not prove anyone's real identity.
+    function guestSession() {
+      return request.auth != null
+        && (request.auth.token.firebase.sign_in_provider == 'anonymous' || signedIn());
+    }
+    function snapshotFields(d) {
+      return {'version': d.version, 'rev': d.rev, 'tables': d.tables, 'attendees': d.attendees};
+    }
+    function validShared(d) {
+      return d.keys().hasAll(['version','rev','tables','attendees','updatedAt','updatedBy','lastAction','changeId'])
+        && d.keys().hasOnly(['version','rev','tables','attendees','updatedAt','updatedBy','lastAction','changeId'])
+        && d.version == 1 && d.rev is int && d.rev >= 1
+        && d.tables is list && d.tables.size() >= 1 && d.tables.size() <= 40
+        && d.attendees is list && d.attendees.size() <= 500
+        && d.updatedBy == request.auth.uid && d.updatedAt == request.time
+        && d.lastAction is string && d.lastAction.size() <= 160
+        && d.changeId is string && d.changeId.matches('^[A-Za-z0-9]{20}$');
+    }
+    function sharedAudit(d) {
+      let h = getAfter(/databases/$(database)/documents/sharedPlans/snu60/history/$(d.changeId)).data;
+      return h.rev == d.rev && h.by == request.auth.uid && h.at == request.time && h.action == d.lastAction;
+    }
+    function genuineBefore(before) {
+      return exists(/databases/$(database)/documents/sharedPlans/snu60)
+        ? before == snapshotFields(get(/databases/$(database)/documents/sharedPlans/snu60).data)
+        : before.rev == 0;
+    }
+    match /sharedPlans/snu60 {
+      allow get: if true;
+      allow list, delete: if false;
+      allow create: if guestSession() && validShared(request.resource.data)
+        && request.resource.data.rev == 1 && sharedAudit(request.resource.data);
+      allow update: if guestSession() && validShared(request.resource.data)
+        && request.resource.data.rev == resource.data.rev + 1 && sharedAudit(request.resource.data);
+      match /history/{entry} {
+        allow get: if guestSession();
+        allow list: if guestSession() && request.query.limit != null && request.query.limit <= 30;
+        allow create: if guestSession()
+          && request.resource.data.keys().hasAll(['before','rev','action','by','at'])
+          && request.resource.data.keys().hasOnly(['before','rev','action','by','at'])
+          && request.resource.data.before is map
+          && request.resource.data.before.keys().hasAll(['version','rev','tables','attendees'])
+          && request.resource.data.before.keys().hasOnly(['version','rev','tables','attendees'])
+          && request.resource.data.before.version == 1
+          && request.resource.data.before.rev is int && request.resource.data.before.rev >= 0
+          && request.resource.data.before.tables is list
+          && request.resource.data.before.tables.size() >= 1 && request.resource.data.before.tables.size() <= 40
+          && request.resource.data.before.attendees is list && request.resource.data.before.attendees.size() <= 500
+          && genuineBefore(request.resource.data.before)
+          && request.resource.data.rev == request.resource.data.before.rev + 1
+          && request.resource.data.by == request.auth.uid && request.resource.data.at == request.time
+          && request.resource.data.action is string && request.resource.data.action.size() <= 160
+          && getAfter(/databases/$(database)/documents/sharedPlans/snu60).data.rev == request.resource.data.rev
+          && getAfter(/databases/$(database)/documents/sharedPlans/snu60).data.updatedBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/sharedPlans/snu60).data.changeId == entry;
+        allow update, delete: if false;
+      }
     }
     match /{document=**} { allow read, write: if false; }
   }

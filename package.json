@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check app.js && node --check core.mjs && node --check firebase-config.js && node --check privacy-guard.js && node --check public-plan.mjs && node --check public-view.js && node --check editor-tools.js"
+    "check": "node --check app.js && node --check core.mjs && node --check firebase-config.js && node --check privacy-guard.js && node --check public-plan.mjs && node --check public-view.js && node --check editor-tools.js && node --check guest-policy.mjs && node --check shared-editor.js"
   }
 }
