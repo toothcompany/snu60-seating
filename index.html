@@ -1,22 +1,12 @@
 <!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
-<title>예방치학교실 60주년 · 좌석 편집</title>
-<link rel="stylesheet" href="./style.css">
-</head>
-<body>
-<header class="topbar"><div><div class="eyebrow">SEOUL NATIONAL UNIVERSITY · 60TH ANNIVERSARY</div><h1>함께 만드는 자리</h1><p>예방치학교실 60주년 기념행사 · 좌석 편집</p></div><div class="account"><span id="accountLabel">로그인하지 않음</span><button id="login" class="primary">Google 로그인</button><button id="logout" hidden>로그아웃</button></div></header>
-<section class="toolbar" aria-label="편집 도구"><div class="toolbarGroup"><button id="demo">가상 명단으로 연습</button><button id="import" data-edit disabled>명단 불러오기</button><button id="add" data-edit disabled>참석자 추가</button><button id="undo" data-edit disabled>내 마지막 변경 취소</button></div><div class="toolbarGroup"><button id="export" disabled>백업 JSON</button><button id="csv" disabled>엑셀용 CSV</button><button id="history" disabled>변경 이력</button><button id="print" disabled>인쇄</button><a href="https://github.com/toothcompany/snu60-seating/blob/main/SETUP.md" target="_blank" rel="noopener">설정 안내</a></div><input id="file" type="file" accept=".xlsx,.csv,.json" hidden></section>
-<div id="status" class="status" role="status" aria-live="polite">로그인 후 승인된 운영진만 실제 명단에 접근할 수 있습니다.</div>
-<div id="notice" class="notice">실제 참석자 이름과 소속은 공개 GitHub 코드에 포함되지 않습니다. 연습 모드는 가상 명단이며 공동 저장되지 않습니다.</div>
-<main class="layout"><section class="plan"><div class="planbar"><span id="summary">12개 테이블 · 정원 99석</span><div class="zoom"><button id="zoomOut" aria-label="축소">−</button><span id="zoomLabel">100%</span><button id="zoomIn" aria-label="확대">+</button><button id="fit">화면 맞춤</button></div></div><div class="legend"><span class="dot over">정원 초과</span><span class="dot under">정원 미달</span><span class="dot full">정원 일치</span><small>이름 끌기: 이동 · 이름 위에 놓기: 자리 교환 · 원 끌기: 테이블 이동 · 클릭: 상세 수정</small></div><div id="viewport" class="viewport"><div id="sizer"><div id="world"><div class="stage">무대 <small>STAGE</small></div><div id="tables"></div></div></div><div id="welcome" class="welcome"><h2>운영진이 함께 편집하는 좌석표</h2><p>Google 로그인 후 사용 권한을 확인합니다.<br>아직 설정 전이라면 가상 명단으로 동작을 살펴보세요.</p></div></div></section>
-<aside class="roster"><h2>참석자 명단 <span id="rosterCount">0</span></h2><label class="sr-only" for="search">이름 또는 소속 검색</label><input id="search" type="search" placeholder="이름·소속 검색"><label class="sr-only" for="filter">테이블 필터</label><select id="filter"><option value="all">모든 테이블</option><option value="none">미배정</option></select><div id="unassigned" class="unassigned" tabindex="0">여기에 놓으면 미배정으로 이동</div><div id="people" class="people"></div></aside></main>
-<dialog id="editor"><form id="editForm"><h2 id="editorTitle"></h2><div id="editorFields"></div><div class="dialogButtons"><button type="button" id="remove" class="danger" hidden>참석자 삭제</button><button type="button" id="cancel">닫기</button><button type="submit" id="save" class="primary">저장</button></div></form></dialog>
-<dialog id="historyDialog"><h2>최근 변경 이력</h2><p class="muted">서버에 저장된 최근 30건입니다. 전체 복원 전에는 JSON 백업을 보관하세요.</p><div id="historyList"></div><button id="historyClose">닫기</button></dialog>
-<div id="toast" role="alert" hidden></div>
-<noscript>JavaScript를 켜야 사용할 수 있습니다.</noscript>
-<script type="module" src="./privacy-guard.js"></script>
-<script type="module" src="./app.js"></script>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>예방치학교실 60주년 · 공개 좌석 배치도</title><link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./public.css"></head>
+<body class="public-view">
+<header class="topbar"><div><div class="eyebrow">SEOUL NATIONAL UNIVERSITY · 60TH ANNIVERSARY</div><h1>예방치학교실 60주년 좌석 배치도</h1><p><span id="updatedLabel">2026.11.10 배치 검토안</span> · <span id="sourceLabel">최종 명단과 수정 요청 반영</span></p></div><div class="account"><span class="readBadge">로그인 없이 보기</span><a href="./editor.html">운영진 로그인 · 편집</a></div></header>
+<section class="toolbar" aria-label="보기 도구"><div class="toolbarGroup"><button id="print">인쇄 / PDF</button><button id="csv">명단 CSV</button><button id="export">현재 배치 JSON</button><button id="seedDownload">초기 배치 JSON</button></div><div class="toolbarGroup"><span class="muted">보기는 공개 · 수정은 승인된 운영진만</span></div></section>
+<div id="status" class="status" role="status" aria-live="polite">공개 배치안을 불러오고 있습니다.</div>
+<div class="notice">이름·소속/비고·좌석을 공개합니다. 연락처·주소·관리자 이메일은 포함하지 않습니다. 사람 이름을 누르면 해당 테이블을 찾을 수 있습니다.</div>
+<main class="layout"><section class="plan"><div class="planbar"><span id="summary">12개 테이블 · 만찬 99석</span><div class="zoom"><button id="zoomOut" aria-label="축소">−</button><span id="zoomLabel">100%</span><button id="zoomIn" aria-label="확대">+</button><button id="fit">화면 맞춤</button></div></div><div class="legend"><span class="dot over">정원 초과</span><span class="dot under">정원 미달</span><span class="dot full">정원 일치</span><small>무대 쪽 1번부터 시계방향 · 이름을 눌러 자리 확인</small></div><div id="selection" role="status">오른쪽 명단에서 이름·소속으로 검색할 수 있습니다.</div><div id="viewport" class="viewport"><div id="sizer"><div id="world"><div class="stage">무대 <small>STAGE</small></div><div id="tables"></div></div></div></div></section>
+<aside class="roster"><h2>참석자 명단 <span id="rosterCount">100</span></h2><label class="sr-only" for="search">이름 또는 소속 검색</label><input id="search" type="search" placeholder="이름·소속/비고 검색"><label class="sr-only" for="filter">테이블 필터</label><select id="filter"><option value="all">모든 테이블</option><option value="none">만찬 미배정 / 학술행사만</option></select><div class="unassigned">만찬 99명 배정 · 학술행사만 1명</div><div id="people" class="people"></div></aside></main>
+<details class="publicNotes"><summary>배치 기준 및 반영사항</summary><ul id="notesList"></ul><p>운영진의 공동 편집 변경을 공개화면에도 실시간 표시하려면 공개용 Firestore 규칙을 게시해야 합니다. 연결 전에도 위 초기 배치안은 로그인 없이 볼 수 있습니다.</p></details>
+<noscript>좌석표를 보려면 브라우저의 JavaScript를 켜주세요.</noscript><script type="module" src="./public-view.js"></script>
 </body></html>
