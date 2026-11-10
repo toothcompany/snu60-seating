@@ -1,0 +1,44 @@
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+const server=spawn('python3',['-m','http.server','4173','--bind','127.0.0.1'],{stdio:'ignore'});
+let browser;
+try {
+ for(let i=0;i<60;i++){try{const r=await fetch('http://127.0.0.1:4173/');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
+ await mkdir('test-output',{recursive:true});
+ browser=await chromium.launch({headless:true});
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ // Prove the public initial plan renders even with Firebase unreachable and no Google login.
+ await page.route('https://www.gstatic.com/**',r=>r.abort());
+ await page.goto('http://127.0.0.1:4173/',{waitUntil:'networkidle'});
+ await page.waitForSelector('.tableGroup');
+ assert.equal(await page.locator('.tableGroup').count(),12);
+ assert.equal(await page.locator('#tables .seat').count(),99);
+ assert.equal(await page.locator('#people .personRow').count(),100);
+ assert.equal(await page.locator('#rosterCount').innerText(),'100');
+ assert.equal(await page.locator('.tableDisc.over,.tableDisc.under').count(),0);
+ assert.ok((await page.locator('body').innerText()).includes('로그인 없이 보기'));
+ assert.equal(await page.locator('#login').count(),0);
+ await page.locator('#search').fill('신명섭');
+ assert.equal(await page.locator('#people .personRow').count(),1);
+ assert.ok((await page.locator('#people').innerText()).includes('11번'));
+ await page.locator('#search').fill('신혜선');assert.equal(await page.locator('#people .personRow').count(),1);
+ await page.locator('#search').fill('');await page.locator('#filter').selectOption('none');
+ assert.equal(await page.locator('#people .personRow').count(),1);assert.ok((await page.locator('#people').innerText()).includes('신종학'));
+ await page.locator('#filter').selectOption('all');
+ await page.screenshot({path:'test-output/public-desktop.png',fullPage:true});
+ const visible=['신명섭','신혜선','김문섭','이정후'];
+ for(const name of visible)assert.ok((await page.locator('#people').innerText()).includes(name));
+ assert.equal((await page.locator('#people').innerText()).includes('유한양행 2'),false);
+ await page.setViewportSize({width:390,height:844});await page.reload({waitUntil:'networkidle'});await page.locator('#fit').click();
+ assert.equal(await page.locator('.tableGroup').count(),12);assert.equal(await page.locator('#people .personRow').count(),100);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));
+ await page.screenshot({path:'test-output/public-mobile.png',fullPage:true});
+ assert.deepEqual(errors,[]);
+ // The editing page still requires login and starts with disabled edit controls.
+ await page.goto('http://127.0.0.1:4173/editor.html',{waitUntil:'networkidle'});
+ assert.equal(await page.locator('#login').count(),1);assert.equal(await page.locator('#seed').isDisabled(),true);assert.equal(await page.locator('#import').isDisabled(),true);
+ console.log('PASS: anonymous viewer renders 12 tables, 99 occupied seats, 100 roster entries, search, academic-only filter, desktop and mobile; editing remains locked without login.');
+} finally { if(browser)await browser.close();server.kill(); }
