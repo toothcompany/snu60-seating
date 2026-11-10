@@ -1,7 +1,7 @@
-name: Test anonymous shared editing rules
+name: Test temporary public editing rules
 on:
   push:
-    paths: ['firestore.rules', 'guest-policy.mjs', 'shared-editor.js', 'emulator-tests/**', 'firebase-test.json', '.github/workflows/shared-rules.yml']
+    paths: ['firestore.rules', 'guest-policy.mjs', 'temporary-access.mjs', 'shared-editor.js', 'tests/**', 'emulator-tests/**', 'firebase-test.json', '.github/workflows/shared-rules.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,5 +22,5 @@ jobs:
         run: npm install --no-save --package-lock=false firebase @firebase/rules-unit-testing firebase-tools
       - name: Check syntax and seating behavior
         run: npm run check && npm test
-      - name: Verify anonymous writes and private-data isolation in emulator
+      - name: Verify no-auth writes, expiry and private-data isolation in emulator
         run: npx firebase emulators:exec --only firestore --project demo-snu60-guest --config firebase-test.json 'node --test --test-concurrency=1 emulator-tests/shared-rules.mjs'
