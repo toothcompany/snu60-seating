@@ -1,9 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Bootstrap the first administrator ONLY in the Firebase console:
-    // members/{exact Google login email} => { role: "admin" }
-    // Email addresses and member documents must never be put in the public repository.
+    // First administrator: create members/{exact Google login email} in the console.
+    // Never publish member emails, contact details, service credentials, or history.
     function signedIn() {
       return request.auth != null
         && request.auth.token.email is string
@@ -60,6 +59,24 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/events/snu60).data.updatedBy == request.auth.uid;
         allow update, delete: if false;
       }
+    }
+    // Only this sanitized projection is public. Member documents and history stay private.
+    match /publicPlans/snu60 {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if canEdit()
+        && request.resource.data.keys().hasAll(['version','rev','tables','attendees','releaseId','publishedAt'])
+        && request.resource.data.keys().hasOnly(['version','rev','tables','attendees','releaseId','publishedAt'])
+        && request.resource.data.version == 1
+        && request.resource.data.rev is int
+        && request.resource.data.rev >= 1
+        && request.resource.data.releaseId is string
+        && request.resource.data.releaseId.size() <= 80
+        && request.resource.data.publishedAt == request.time
+        && request.resource.data.rev == getAfter(/databases/$(database)/documents/events/snu60).data.rev
+        && request.resource.data.tables == getAfter(/databases/$(database)/documents/events/snu60).data.tables
+        && request.resource.data.attendees == getAfter(/databases/$(database)/documents/events/snu60).data.attendees;
+      allow delete: if admin();
     }
     match /{document=**} { allow read, write: if false; }
   }
