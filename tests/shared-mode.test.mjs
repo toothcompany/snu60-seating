@@ -5,7 +5,7 @@ import {publishedPlan} from '../public-plan.mjs';
 import {mayEdit,startingState,prepareChange,connectionError} from '../guest-policy.mjs';
 import {personSignature} from '../core.mjs';
 
-test('visitors edit only with a server-confirmed session and connectivity',()=>{
+test('editing requires a browser label, server-confirmed connectivity and no pending change',()=>{
  const ready={user:{uid:'guest-a'},connected:true,pending:false,online:true};
  assert.equal(mayEdit(ready),true);
  for(const changes of [{user:null},{connected:false},{pending:true},{online:false}])assert.equal(mayEdit({...ready,...changes}),false);
@@ -22,10 +22,14 @@ test('a no-account move preserves every participant and increments revision',()=
 test('stale restore cannot overwrite another visitor change',()=>{
  const s=startingState(null,publishedPlan());s.rev=3;assert.throws(()=>prepareChange(s,{type:'replace',expectedRev:2,value:s}),/다른/);
 });
-test('anonymous connection errors provide an actionable setup message',()=>{
- assert.match(connectionError({code:'auth/admin-restricted-operation'}),/익명/);assert.match(connectionError({code:'permission-denied'}),/규칙/);
+test('permission errors provide an actionable rules-publish message',()=>{
+ assert.match(connectionError({code:'permission-denied'}),/규칙/);
+ assert.match(connectionError({code:'unavailable'}),/저장되지/);
 });
-test('public page has no interactive sign-in and uses automatic anonymous auth',()=>{
+test('public editor needs neither Google login nor Anonymous auth; retains server timestamps and history',()=>{
  const html=readFileSync(new URL('../index.html',import.meta.url),'utf8'),js=readFileSync(new URL('../shared-editor.js',import.meta.url),'utf8');
- assert.match(html,/shared-editor\.js/);assert.doesNotMatch(html,/id="login"|Google 로그인/);assert.match(js,/signInAnonymously/);assert.doesNotMatch(js,/signInWithPopup/);assert.match(js,/sharedPlans|SHARED_DOCUMENT/);assert.match(js,/getDocs\(q\)/);assert.match(js,/serverTimestamp/);
+ assert.match(html,/shared-editor\.js/);assert.doesNotMatch(html,/id="login"|Google 로그인/);
+ assert.doesNotMatch(js,/signInAnonymously|signInWithPopup|firebase-auth\.js/);
+ assert.match(js,/browserVisitor/);assert.match(js,/editingWindowOpen/);
+ assert.match(js,/sharedPlans|SHARED_DOCUMENT/);assert.match(js,/getDocs\(q\)/);assert.match(js,/serverTimestamp/);
 });
