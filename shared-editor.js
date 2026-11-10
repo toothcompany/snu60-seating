@@ -2,21 +2,29 @@ import {WIDTH,HEIGHT,copy,normalize,membersAt,occupancy,personSignature,rowsToSt
 import {firebaseConfig} from './firebase-config.js';
 import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs';
 import {SHARED_DOCUMENT,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs';
+import {editingWindowOpen,EDITING_END_LABEL,browserVisitor} from './temporary-access.mjs';
 
 const $=id=>document.getElementById(id);
 const make=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
 const seed=publishedPlan();
-let state=startingState(null,seed),user=null,auth=null,db=null,F=null,A=null,unsubscribe=null;
+let storage;try{storage=window.localStorage;}catch{}
+// This identifier is only a convenience for history/undo; it is NOT verified identity.
+const user=browserVisitor(storage,()=>crypto.randomUUID());
+let state=startingState(null,seed),db=null,F=null,unsubscribe=null;
 let connected=false,pending=false,existsOnServer=false,zoom=.55,drag=null,undo=null,epoch=0,connecting=false;
 let toastTimer,waitTimer,formAction=null;
-const editable=()=>mayEdit({user,connected,pending,online:navigator.onLine});
+const editable=()=>editingWindowOpen()&&mayEdit({user,connected,pending,online:navigator.onLine});
 function status(text,kind=''){ $('status').textContent=text;$('status').className='status '+kind; }
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,8000);}
 function syncButtons(){
  document.querySelectorAll('[data-edit]').forEach(b=>b.disabled=!editable());
  $('undo').disabled=!editable()||!undo;$('publish').disabled=!editable()||existsOnServer;
- $('reconnect').disabled=pending||connecting;$('history').disabled=!connected||!user;
- $('accountLabel').textContent=user?'방문자 연결 · '+user.uid.slice(0,6):'로그인 없이 보기';
+ $('reconnect').disabled=pending||connecting;$('history').disabled=!connected;
+ $('accountLabel').textContent=editingWindowOpen()?'로그인 없이 편집 · 브라우저 '+user.uid.slice(-6):'공동 편집 종료 · 보기 전용';
+}
+function connectionStatus(){
+ if(!editingWindowOpen()){status('임시 공동 편집이 종료되었습니다. 보기·백업만 가능합니다.','wait');return;}
+ status(existsOnServer?`로그인 없이 공동 편집 연결 완료 · 변경 ${state.rev}`:'연결 완료 · 초기 배치 공동 저장을 누르거나 자리를 옮기면 저장됩니다.','ok');
 }
 function setZoom(v){zoom=Math.max(.2,Math.min(1.5,v));$('world').style.transform=`scale(${zoom})`;$('sizer').style.width=WIDTH*zoom+'px';$('sizer').style.height=HEIGHT*zoom+'px';$('zoomLabel').textContent=Math.round(zoom*100)+'%';}
 function fit(){setZoom(($('viewport').clientWidth-16)/WIDTH);}
@@ -48,7 +56,7 @@ function renderPeople(){
  if(!list.length)$('people').append(make('p','muted','조건에 맞는 참석자가 없습니다.'));
 }
 async function mutate(operation,label){
- if(!editable()){toast('아직 공동 저장이 연결되지 않았습니다. 저장 설정 안내를 확인하세요.');return false;}
+ if(!editable()){toast(editingWindowOpen()?'공동 저장이 연결되지 않았습니다. 저장 설정 안내의 규칙을 게시해 주세요.':'임시 공동 편집 기간이 끝났습니다.');return false;}
  pending=true;syncButtons();status('공동 저장 중… 서버의 확인 전에는 창을 닫지 마세요.','wait');
  waitTimer=setTimeout(()=>{if(pending)status('서버 응답 확인 중 — 아직 저장 완료가 아닙니다.','wait');},12000);
  try{
@@ -61,7 +69,7 @@ async function mutate(operation,label){
   },{maxAttempts:3});
   if(state.rev<=result.next.rev)state=result.next;existsOnServer=true;undo={before:result.before,rev:result.next.rev};
   status(`공동 저장 완료 · 변경 ${result.next.rev} · ${new Date().toLocaleTimeString('ko-KR')}`,'ok');return true;
- }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(connectionError(error));return false;}
+ }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(editingWindowOpen()?connectionError(error):'임시 편집 기한이 지나 서버가 저장을 차단했습니다.');return false;}
  finally{clearTimeout(waitTimer);pending=false;render();}
 }
 function openEditor(title){$('editorTitle').textContent=title;$('editorFields').replaceChildren();$('remove').hidden=true;$('save').hidden=!editable();$('editor').showModal();}
@@ -119,7 +127,7 @@ async function pointerUp(e){
  if(!drag||drag.pointerId!==e.pointerId)return;const d=drag,hit=d.active&&d.type==='person'?hitTarget(e.clientX,e.clientY):{};finishDrag();
  if(!d.active)return;suppressClickUntil=Date.now()+350;
  if(e.type==='pointercancel'){render();return;}
- if(!editable()){render();toast('연결이 끊겨 변경을 저장하지 않았습니다.');return;}
+ if(!editable()){render();toast('연결 또는 편집 기한을 확인하세요. 변경은 저장되지 않았습니다.');return;}
  if(d.type==='table'){await mutate({type:'tablePosition',id:d.id,fromX:d.source.x,fromY:d.source.y,x:d.source.x+(e.clientX-d.startX)/zoom,y:d.source.y+(e.clientY-d.startY)/zoom},'테이블 위치 이동');return;}
  const expected=personSignature(d.source);
  if(hit.person){const b=state.attendees.find(a=>a.id===hit.person);if(b)await mutate({type:'swapPeople',id:d.id,expected,otherId:b.id,otherExpected:personSignature(b)},'두 참석자 자리 교환');}
@@ -147,9 +155,9 @@ $('file').onchange=async()=>{
  }catch(error){toast(connectionError(error));}
 };
 $('history').onclick=async()=>{
- if(!connected||!user)return;
+ if(!connected)return;
  try{const q=F.query(F.collection(db,SHARED_DOCUMENT,'history'),F.orderBy('rev','desc'),F.limit(30)),snaps=await F.getDocs(q);$('historyList').replaceChildren();
-  snaps.forEach(snapshot=>{const h=snapshot.data(),e=make('div','historyEntry',`#${h.rev} · ${h.action}`);e.append(make('small','',`${h.at?.toDate?.().toLocaleString('ko-KR')||'시간 확인 중'} · ${h.by===user.uid?'이 브라우저':'방문자 '+String(h.by).slice(0,6)}`));
+  snaps.forEach(snapshot=>{const h=snapshot.data(),e=make('div','historyEntry',`#${h.rev} · ${h.action}`);e.append(make('small','',`${h.at?.toDate?.().toLocaleString('ko-KR')||'시간 확인 중'} · ${h.by===user.uid?'이 브라우저':'방문자 '+String(h.by).slice(-6)}`));
    const b=make('button','','이 변경 직전으로 복원');b.type='button';b.disabled=!editable();b.onclick=async()=>{const rev=state.rev;if(confirm(`변경 #${h.rev} 직전의 전체 배치로 되돌릴까요? 현재 배치는 새 이력으로 남습니다.`)&&await mutate({type:'replace',expectedRev:rev,value:h.before},'이전 배치 복원'))$('historyDialog').close();};e.append(b);$('historyList').append(e);
   });if(snaps.empty)$('historyList').append(make('p','muted','저장된 이력이 없습니다.'));$('historyDialog').showModal();
  }catch(error){toast(connectionError(error));}
@@ -161,32 +169,30 @@ function watchShared(){
   if(token!==epoch)return;
   try{const incoming=startingState(snapshot.exists()?snapshot.data():null,seed);if(!snapshot.metadata.fromCache||incoming.rev>=state.rev)state=incoming;
    existsOnServer=snapshot.exists();connected=!snapshot.metadata.fromCache&&!snapshot.metadata.hasPendingWrites;
-   if(!pending){
-    if(connected&&user)status(existsOnServer?`로그인 없이 공동 편집 연결 완료 · 변경 ${state.rev}`:'연결 완료 · 초기 배치입니다. 배치 공동 저장을 누르거나 자리를 옮기면 저장됩니다.','ok');
-    else if(!user)status('보기 가능 · 저장하려면 익명 연결을 준비해야 합니다. 저장 설정 안내를 확인하세요.','wait');
-    else status('서버 확인 대기 — 아직 편집·저장할 수 없습니다.','wait');
-   }if(!drag)render();else syncButtons();
+   if(!pending){if(connected)connectionStatus();else status('서버 확인 대기 — 아직 편집·저장할 수 없습니다.','wait');}
+   if(!drag)render();else syncButtons();
   }catch(error){connected=false;status(connectionError(error),'error');syncButtons();}
  },error=>{if(token!==epoch)return;connected=false;status(connectionError(error),'error');syncButtons();});
 }
-async function connect(){
- if(connecting||pending||!auth||!F)return;connecting=true;syncButtons();status('로그인 화면 없이 공동 저장소에 연결 중…','wait');watchShared();
- try{await auth.authStateReady();if(!auth.currentUser)await A.signInAnonymously(auth);user=auth.currentUser;syncButtons();
-  if(connected)status(existsOnServer?`로그인 없이 공동 편집 연결 완료 · 변경 ${state.rev}`:'연결 완료 · 초기 배치 공동 저장을 눌러주세요.','ok');
- }catch(error){user=null;status(connectionError(error),'error');syncButtons();}
- finally{connecting=false;syncButtons();}
+function connect(){
+ if(connecting||pending||!db||!F)return;
+ status('로그인 없이 공동 저장소에 연결 중…','wait');watchShared();
 }
-$('reconnect').onclick=()=>{if(auth)connect();else initialize();};
+$('reconnect').onclick=()=>{if(db)connect();else initialize();};
 window.addEventListener('offline',()=>{connected=false;finishDrag();status('오프라인 — 공동 저장이 불가능하므로 편집을 잠갔습니다.','error');render();});
 window.addEventListener('online',()=>{if(!pending)connect();});
 window.addEventListener('beforeunload',e=>{if(pending){e.preventDefault();e.returnValue='';}});
 for(const note of DISPLAY_NOTES)$('notesList').append(make('li','',note));
+$('notesList').append(make('li','',`임시 공개 편집 종료: ${EDITING_END_LABEL}. 서버 규칙에도 같은 기한이 적용됩니다. 종료 후에는 보기·백업만 가능하며 데이터가 자동 삭제되는 것은 아닙니다.`));
+let previouslyOpen=editingWindowOpen();
+setInterval(()=>{const open=editingWindowOpen();if(open!==previouslyOpen){previouslyOpen=open;finishDrag();if(!pending)connectionStatus();render();}},10000);
 fit();render();
 async function initialize(){
- if(connecting)return;
- try{const base='https://www.gstatic.com/firebasejs/13.2.0/';const [appModule,authModule,storeModule]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')]);
-  A=authModule;F=storeModule;const app=appModule.getApps().length?appModule.getApp():appModule.initializeApp(firebaseConfig);auth=A.getAuth(app);db=F.getFirestore(app);
-  A.onAuthStateChanged(auth,u=>{user=u;syncButtons();});await connect();
- }catch(error){status('연결 도구를 불러오지 못했습니다. 초기 배치 보기만 가능하며 저장은 되지 않습니다.','error');toast(connectionError(error));syncButtons();}
+ if(connecting)return;connecting=true;syncButtons();
+ try{const base='https://www.gstatic.com/firebasejs/13.2.0/';const [appModule,storeModule]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-firestore.js')]);
+  F=storeModule;const app=appModule.getApps().length?appModule.getApp():appModule.initializeApp(firebaseConfig);db=F.getFirestore(app);
+  connecting=false;connect();
+ }catch(error){status('연결 도구를 불러오지 못했습니다. 초기 배치 보기만 가능하며 저장은 되지 않습니다.','error');toast(connectionError(error));}
+ finally{connecting=false;syncButtons();}
 }
 initialize();
