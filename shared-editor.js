@@ -1,8 +1,11 @@
 import {WIDTH,HEIGHT,copy,normalize,membersAt,occupancy,personSignature,rowsToState,parseCsv,toCsv} from './core.mjs';
+import {fixedHall,dropTableAt} from './table-grid.mjs';
 import {firebaseConfig} from './firebase-config.js';
-import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs';
-import {SHARED_DOCUMENT,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs';
+import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=grid1';
+import {SHARED_DOCUMENT,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs?v=grid1';
 import {editingWindowOpen,EDITING_END_LABEL,browserVisitor} from './temporary-access.mjs';
+
+import {pointer,sameHead,trailAt,advanceTrail} from './undo-trail.mjs';
 
 const $=id=>document.getElementById(id);
 const make=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
@@ -11,14 +14,20 @@ let storage;try{storage=window.localStorage;}catch{}
 // This identifier is only a convenience for history/undo; it is NOT verified identity.
 const user=browserVisitor(storage,()=>crypto.randomUUID());
 let state=startingState(null,seed),db=null,F=null,unsubscribe=null;
-let connected=false,pending=false,existsOnServer=false,zoom=.55,drag=null,undo=null,epoch=0,connecting=false;
+let connected=false,pending=false,existsOnServer=false,zoom=.55,drag=null,serverHead=null,epoch=0,connecting=false;
 let toastTimer,waitTimer,formAction=null;
 const editable=()=>editingWindowOpen()&&mayEdit({user,connected,pending,online:navigator.onLine});
+const journalKey='snu60-undo-v1:'+SHARED_DOCUMENT+':'+user.uid;
+let journal=null;
+try{journal=JSON.parse(sessionStorage.getItem(journalKey));}catch{}
+const undoItems=()=>trailAt(journal,serverHead,user.uid);
+function keepJournal(next){journal=next;try{sessionStorage.setItem(journalKey,JSON.stringify(next));}catch{}}
 function status(text,kind=''){ $('status').textContent=text;$('status').className='status '+kind; }
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,8000);}
 function syncButtons(){
  document.querySelectorAll('[data-edit]').forEach(b=>b.disabled=!editable());
- $('undo').disabled=!editable()||!undo;$('publish').disabled=!editable()||existsOnServer;
+ const steps=undoItems().length; $('undo').disabled=!editable()||!steps;
+ $('undo').title=steps?`내 변경을 한 단계 되돌립니다 (남은 ${steps}단계 · ⌘Z / Ctrl+Z)`:'이 브라우저에서 연속으로 저장한 변경이 있을 때 사용할 수 있습니다.';$('publish').disabled=!editable()||existsOnServer;
  $('reconnect').disabled=pending||connecting;$('history').disabled=!connected;
  $('accountLabel').textContent=editingWindowOpen()?'로그인 없이 편집 · 브라우저 '+user.uid.slice(-6):'공동 편집 종료 · 보기 전용';
 }
@@ -38,7 +47,7 @@ function render(){
  for(const t of state.tables){
   const group=make('div','tableGroup');group.dataset.tid=t.id;group.style.left=t.x+'px';group.style.top=t.y+'px';
   const occ=occupancy(state,t),disc=make('button',`tableDisc ${occ.kind} ${t.number<=3?'vip':''}`);disc.type='button';disc.dataset.tableHandle=t.id;
-  disc.title='끌어서 테이블과 명단 함께 이동 · 클릭해서 정원 수정';disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);
+  disc.title=fixedHall(state)?'다른 테이블에 놓아 두 명단 교환 · 클릭해서 정원 수정':'끌어서 테이블과 명단 함께 이동 · 클릭해서 정원 수정';disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);
   disc.append(make('strong','',t.number+'번'),make('span','count',`${occ.count} / ${t.capacity}명`),make('small','',occ.delta>0?`${occ.delta}명 초과`:occ.delta<0?`${-occ.delta}석 여유`:'정원 일치'));group.append(disc);
   const people=membersAt(state,t.id),slots=Math.max(t.capacity,people.length),radius=slots>12?174:151;
   people.forEach((a,i)=>{
@@ -55,19 +64,31 @@ function renderPeople(){
  for(const a of list){const b=make('button','personRow');b.type='button';b.dataset.aid=a.id;const info=make('span','info');info.append(make('strong','',a.name),make('small','',a.affiliation||'소속 미입력'));const t=state.tables.find(t=>t.id===a.tableId),seat=t?membersAt(state,t.id).findIndex(x=>x.id===a.id)+1:null;b.append(info,make('span','badge',t?`${t.number}번 · ${seat}석`:'미배정'));$('people').append(b);}
  if(!list.length)$('people').append(make('p','muted','조건에 맞는 참석자가 없습니다.'));
 }
-async function mutate(operation,label){
+async function mutate(operation,label,kind='edit'){
  if(!editable()){toast(editingWindowOpen()?'공동 저장이 연결되지 않았습니다. 저장 설정 안내의 규칙을 게시해 주세요.':'임시 공동 편집 기간이 끝났습니다.');return false;}
  pending=true;syncButtons();status('공동 저장 중… 서버의 확인 전에는 창을 닫지 마세요.','wait');
  waitTimer=setTimeout(()=>{if(pending)status('서버 응답 확인 중 — 아직 저장 완료가 아닙니다.','wait');},12000);
  try{
   const actor=user.uid,ref=F.doc(db,SHARED_DOCUMENT),historyRef=F.doc(F.collection(ref,'history'));
   const result=await F.runTransaction(db,async tx=>{
-   const snapshot=await tx.get(ref),base=startingState(snapshot.exists()?snapshot.data():null,seed),change=prepareChange(base,operation);
+   const snapshot=await tx.get(ref),previous=snapshot.exists()?snapshot.data():null,base=startingState(previous,seed);
+   let op=operation;
+   if(kind==='undo'){
+    if(!sameHead(pointer(previous),operation.head)||previous.updatedBy!==actor)throw Error('다른 변경이 먼저 저장되어 되돌릴 수 없습니다. 최신 배치를 유지합니다.');
+    const h=await tx.get(F.doc(ref,'history',operation.target.id)),entry=h.exists()?h.data():null;
+    if(!entry||entry.by!==actor||entry.rev!==operation.target.rev||entry.before?.rev!==entry.rev-1)throw Error('되돌릴 변경 이력을 확인하지 못했습니다.');
+    op={type:'replace',expectedRev:previous.rev,value:entry.before};
+   }
+   const change=prepareChange(base,op,previous??base);
+   const head={rev:change.next.rev,changeId:historyRef.id,lastAction:label,updatedBy:actor};
    tx.set(ref,{...change.next,updatedAt:F.serverTimestamp(),updatedBy:actor,lastAction:label.slice(0,160),changeId:historyRef.id});
    tx.set(historyRef,{before:change.before,rev:change.next.rev,action:label.slice(0,160),by:actor,at:F.serverTimestamp()});
-   return change;
+   return {...change,previous,head};
   },{maxAttempts:3});
-  if(state.rev<=result.next.rev)state=result.next;existsOnServer=true;undo={before:result.before,rev:result.next.rev};
+  keepJournal(advanceTrail(journal,result.previous,result.head,actor,kind));
+  if(state.rev<=result.next.rev){state=result.next;serverHead=result.head;}existsOnServer=true;
+  if(undoItems().length)armBack();
+  if(kind==='undo')toast('바로 전 배치로 되돌리고 공동 저장했습니다.');
   status(`공동 저장 완료 · 변경 ${result.next.rev} · ${new Date().toLocaleTimeString('ko-KR')}`,'ok');return true;
  }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(editingWindowOpen()?connectionError(error):'임시 편집 기한이 지나 서버가 저장을 차단했습니다.');return false;}
  finally{clearTimeout(waitTimer);pending=false;render();}
@@ -87,7 +108,7 @@ function addPerson(){if(!editable())return;openEditor('참석자 추가');const 
 function editTable(id){
  const t=state.tables.find(t=>t.id===id);if(!t)return;const expectedRev=state.rev;openEditor(`${t.number}번 테이블`);
  const cap=field('정원 (1~30명)',t.capacity,'number');cap.min=1;cap.max=30;cap.step=1;cap.disabled=!editable();const swap=tableSelect(null,'테이블 전체 위치 교환');for(const option of Array.from(swap.options))if(option.value===id)option.remove();swap.options[0].text='교환할 테이블 선택';
- const b=make('button','','선택한 테이블과 위치 교환');b.type='button';b.disabled=!editable();swap.disabled=!editable();$('editorFields').append(b,make('p','muted','번호와 명단을 유지하면서 두 테이블의 위치만 교환합니다.'));
+ const b=make('button','','선택한 테이블과 위치 교환');b.type='button';b.disabled=!editable();swap.disabled=!editable();$('editorFields').append(b,make('p','muted',fixedHall(state)?'번호는 위치에 고정됩니다. 두 테이블의 참석자와 정원이 좌석 순서 그대로 자리를 바꿉니다.':'두 테이블의 위치를 명단과 함께 교환합니다.'));
  b.onclick=async()=>{if(!swap.value){toast('교환할 테이블을 선택하세요.');return;}if(await mutate({type:'swapTables',id,otherId:swap.value,expectedRev},'테이블 위치 교환'))$('editor').close();};
  formAction=async()=>{if(await mutate({type:'capacity',id,capacity:Number(cap.value),expectedCapacity:t.capacity},'테이블 정원 변경'))$('editor').close();};
 }
@@ -101,7 +122,7 @@ for(const host of [$('tables'),$('people')]){
 function pointerDown(e){
  if(e.button!==0||drag||!editable())return;const a=e.target.closest('[data-aid]'),t=e.target.closest('[data-table-handle]');if(!a&&!t)return;
  const id=a?a.dataset.aid:t.dataset.tableHandle,source=a?state.attendees.find(p=>p.id===id):state.tables.find(t=>t.id===id);if(!source)return;
- drag={type:a?'person':'table',id,source:copy(source),startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,pointerId:e.pointerId,node:a||t,active:false,ghost:null};
+ drag={type:a?'person':'table',id,source:copy(source),rev:state.rev,startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,pointerId:e.pointerId,node:a||t,active:false,ghost:null};
  drag.node.setPointerCapture?.(e.pointerId);
 }
 function hitTarget(x,y){
@@ -119,7 +140,12 @@ function pointerMove(e){
  if(drag.type==='person'){
   drag.ghost.style.left=e.clientX+'px';drag.ghost.style.top=e.clientY+'px';clearTarget();const h=hitTarget(e.clientX,e.clientY);
   if(h.unassigned)$('unassigned').classList.add('dropTarget');else if(h.table)document.querySelector(`[data-table-handle="${CSS.escape(h.table)}"]`)?.classList.add('dropTarget');
- }else{const g=document.querySelector(`[data-tid="${CSS.escape(drag.id)}"]`);if(g){g.style.left=(drag.source.x+(e.clientX-drag.startX)/zoom)+'px';g.style.top=(drag.source.y+(e.clientY-drag.startY)/zoom)+'px';}}
+ }else{
+  const x=drag.source.x+(e.clientX-drag.startX)/zoom,y=drag.source.y+(e.clientY-drag.startY)/zoom;
+  const g=document.querySelector(`[data-tid="${CSS.escape(drag.id)}"]`);
+  if(g){g.style.left=x+'px';g.style.top=y+'px';}
+  if(fixedHall(state)){clearTarget();const target=dropTableAt(state,x,y);if(target&&target!==drag.id)document.querySelector(`[data-table-handle="${CSS.escape(target)}"]`)?.classList.add('dropTarget');}
+ }
  e.preventDefault();
 }
 function finishDrag(){if(!drag)return;drag.ghost?.remove();drag.node.classList.remove('dragging');drag.node.style.pointerEvents='';try{drag.node.releasePointerCapture?.(drag.pointerId);}catch{}drag=null;clearTarget();document.body.classList.remove('dragActive');}
@@ -128,7 +154,15 @@ async function pointerUp(e){
  if(!d.active)return;suppressClickUntil=Date.now()+350;
  if(e.type==='pointercancel'){render();return;}
  if(!editable()){render();toast('연결 또는 편집 기한을 확인하세요. 변경은 저장되지 않았습니다.');return;}
- if(d.type==='table'){await mutate({type:'tablePosition',id:d.id,fromX:d.source.x,fromY:d.source.y,x:d.source.x+(e.clientX-d.startX)/zoom,y:d.source.y+(e.clientY-d.startY)/zoom},'테이블 위치 이동');return;}
+ if(d.type==='table'){
+  const x=d.source.x+(e.clientX-d.startX)/zoom,y=d.source.y+(e.clientY-d.startY)/zoom;
+  if(fixedHall(state)){
+   const target=dropTableAt(state,x,y),v=$('viewport').getBoundingClientRect();
+   if(!target||target===d.id||e.clientX<v.left||e.clientX>v.right||e.clientY<v.top||e.clientY>v.bottom){render();return;}
+   await mutate({type:'swapTables',id:d.id,otherId:target,expectedRev:d.rev},'테이블 단체 자리 교환');
+  }else await mutate({type:'tablePosition',id:d.id,fromX:d.source.x,fromY:d.source.y,x,y},'테이블 위치 이동');
+  return;
+ }
  const expected=personSignature(d.source);
  if(hit.person){const b=state.attendees.find(a=>a.id===hit.person);if(b)await mutate({type:'swapPeople',id:d.id,expected,otherId:b.id,otherExpected:personSignature(b)},'두 참석자 자리 교환');}
  else if(hit.unassigned||hit.table){const target=hit.unassigned?null:hit.table;if(target!==d.source.tableId)await mutate({type:'move',id:d.id,expected,tableId:target},'참석자 테이블 이동');else render();}
@@ -136,8 +170,42 @@ async function pointerUp(e){
 }
 window.addEventListener('pointermove',pointerMove,{passive:false});window.addEventListener('pointerup',pointerUp);window.addEventListener('pointercancel',pointerUp);
 $('search').oninput=renderPeople;$('filter').onchange=renderPeople;$('zoomIn').onclick=()=>setZoom(zoom+.1);$('zoomOut').onclick=()=>setZoom(zoom-.1);$('fit').onclick=fit;
-$('undo').onclick=async()=>{if(!undo||!editable())return;const saved=undo;if(await mutate({type:'replace',expectedRev:saved.rev,value:saved.before},'내 마지막 변경 취소')){undo=null;syncButtons();}};
-$('publish').onclick=async()=>{if(existsOnServer||!editable())return;await mutate({type:'replace',expectedRev:0,value:state},'초기 배치 공동 저장');};
+async function undoOne(){
+ const target=undoItems().at(-1);
+ if(!target||!editable())return false;
+ return mutate({head:pointer(serverHead),target},'한 단계 되돌리기 · 변경 #'+target.rev,'undo');
+}
+$('undo').onclick=undoOne;
+window.addEventListener('keydown',e=>{
+ if(e.defaultPrevented||e.isComposing||e.repeat||!(e.metaKey||e.ctrlKey)||e.altKey||e.shiftKey||e.key.toLowerCase()!=='z')return;
+ if(document.querySelector('dialog[open]')||e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])')||!editable()||!undoItems().length)return;
+ e.preventDefault();void undoOne();
+});
+// Only edits made on this page create a same-page Back entry. Normal navigation,
+// refresh, and viewing the plan never silently write to the shared document.
+const backTag='snu60SeatBackV1';
+let armed=Boolean(history.state?.[backTag]==='edit');
+function armBack(){
+ if(armed)return;
+ try{
+  const canLeave=history.state?.[backTag]==='base'?history.state.snu60CanLeave:history.length>1;
+  history.replaceState({...history.state,[backTag]:'base',snu60CanLeave:canLeave},'');
+  history.pushState({...history.state,[backTag]:'edit'},'');armed=true;
+ }catch{}
+}
+window.addEventListener('popstate',()=>{
+ const previous=armed;armed=history.state?.[backTag]==='edit';
+ if(!previous||history.state?.[backTag]!=='base')return;
+ if(pending){armBack();toast('공동 저장 중입니다. 저장이 끝난 뒤 다시 시도해 주세요.');return;}
+ if(!editable()||!undoItems().length){if(history.state?.snu60CanLeave)history.back();return;}
+ $('backLeave').hidden=!history.state?.snu60CanLeave;
+ const dialog=$('backDialog');if(!dialog.open)dialog.showModal();
+});
+$('backUndo').onclick=async()=>{$('backDialog').close();if(await undoOne()){if(undoItems().length)armBack();}else if(undoItems().length)armBack();};
+$('backStay').onclick=()=>{$('backDialog').close();armBack();};
+$('backDialog').addEventListener('cancel',()=>armBack());
+$('backLeave').onclick=()=>{$('backDialog').close();if(history.state?.snu60CanLeave)history.back();};
+$('publish').onclick=async()=>{if(existsOnServer||!editable())return;await mutate({type:'replace',expectedRev:0,value:state},'초기 배치 공동 저장','initial');};
 function download(name,text,mime){const url=URL.createObjectURL(new Blob([text],{type:mime})),a=make('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);}
 $('export').onclick=()=>download(`snu60-shared-${new Date().toISOString().replaceAll(':','-')}.json`,JSON.stringify(normalize(state),null,2),'application/json');
 $('csv').onclick=()=>download('snu60-shared.csv',toCsv(state),'text/csv;charset=utf-8');$('print').onclick=()=>window.print();
@@ -167,7 +235,7 @@ function watchShared(){
  const token=++epoch;unsubscribe?.();connected=false;syncButtons();
  unsubscribe=F.onSnapshot(F.doc(db,SHARED_DOCUMENT),{includeMetadataChanges:true},snapshot=>{
   if(token!==epoch)return;
-  try{const incoming=startingState(snapshot.exists()?snapshot.data():null,seed);if(!snapshot.metadata.fromCache||incoming.rev>=state.rev)state=incoming;
+  try{const incoming=startingState(snapshot.exists()?snapshot.data():null,seed);if(!snapshot.metadata.hasPendingWrites&&(!snapshot.metadata.fromCache||incoming.rev>=state.rev)){state=incoming;serverHead=snapshot.exists()?snapshot.data():null;}
    existsOnServer=snapshot.exists();connected=!snapshot.metadata.fromCache&&!snapshot.metadata.hasPendingWrites;
    if(!pending){if(connected)connectionStatus();else status('서버 확인 대기 — 아직 편집·저장할 수 없습니다.','wait');}
    if(!drag)render();else syncButtons();

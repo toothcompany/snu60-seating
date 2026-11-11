@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { emptyState, membersAt, occupancy, normalize } from '../core.mjs';
+import { membersAt, occupancy, normalize } from '../core.mjs';
 import { publishedPlan, ACADEMIC_ONLY } from '../public-plan.mjs';
 const plan=publishedPlan();
 const sourceAttending=[12,41,48,54,56,59,61,63,64,66,70,73,75,77,78,79,80,81,84,85,86,87,91,92,95,96,100,101,104,105,108,112,113,114,115,118,119,123,124,131,136,139,140,141,142,146,149,157,158,160,166,169,170,172,175,176,178,179,180,184,185,186,187,189,193,194,197,198,199,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230];
 const person=n=>plan.attendees.find(a=>a.name===n);
 const seat=a=>membersAt(plan,a.tableId).findIndex(b=>b.id===a.id)+1;
-function location(s,a){const t=s.tables.find(t=>t.id===a.tableId),n=membersAt(s,t.id).findIndex(b=>b.id===a.id),angle=(-90+n*360/t.capacity)*Math.PI/180;return [t.x+151*Math.cos(angle),t.y+151*Math.sin(angle)];}
+const tableNumber = a=>plan.tables.find(t=>t.id===a.tableId)?.number;
 test('all 99 attending rows preserved, plus explicitly requested Shin Hye-sun',()=>{
  assert.equal(sourceAttending.length,99);assert.equal(plan.attendees.length,100);
  assert.deepEqual(plan.attendees.map(a=>Number(a.id.split('-')[1])).sort((a,b)=>a-b),[...sourceAttending,127].sort((a,b)=>a-b));
@@ -26,14 +26,17 @@ test('requested front-table moves and adjacent seats',()=>{
  assert.equal(person('조현재').tableId,'t6');assert.equal(person('이병진').tableId,'t6');
  assert.equal(person('김희찬').tableId,person('허준석').tableId);assert.equal(Math.abs(seat(person('김희찬'))-seat(person('허준석'))),1);
 });
-test('table position swaps retain Song and Lee at their physical seats',()=>{
- const old=emptyState();
- for(const [a,b] of [[4,5],[7,8]])assert.deepEqual([plan.tables[a-1].x,plan.tables[a-1].y],[old.tables[b-1].x,old.tables[b-1].y]);
- for(const [name,table,order] of [['송영하',4,7],['이봉호',5,0]]){
-  const oldPerson={id:name,name,tableId:`t${table}`,affiliation:'',order};
-  const before=emptyState();before.attendees=Array.from({length:8},(_,i)=>({id:`${name}-${i}`,name:'x',affiliation:'',tableId:`t${table}`,order:i}));before.attendees[order]=oldPerson;
-  assert.deepEqual(location(plan,person(name)),location(before,oldPerson));
+test('renumbering preserves the previously chosen group locations and seat order',()=>{
+ const rows=[['t1','t3','t2'],['t5','t4','t6'],['t8','t7','t9'],['t10','t11','t12']];
+ for (const [r,ids] of rows.entries()) for(const [col,id] of ids.entries()) {
+  const t=plan.tables.find(t=>t.id===id);
+  assert.equal(t.number,3*r+col+1);assert.equal(t.x,240+col*480);assert.equal(t.y,300+430*r);
  }
+ for(const [name,number,seatNo] of [['송영하',4,8],['이봉호',5,1]]) {
+  const a=person(name);assert.equal(tableNumber(a),number);assert.equal(seat(a),seatNo);
+ }
+ assert.equal(tableNumber(person('이원재')),3);assert.equal(tableNumber(person('김남희')),7);
+ assert.equal(tableNumber(person('김희찬')),8);assert.equal(tableNumber(person('허준석')),8);
 });
 test('corrections and family identities',()=>{
  assert.ok(person('신명섭'));assert.ok(!person('신영섭'));assert.ok(person('신혜선'));

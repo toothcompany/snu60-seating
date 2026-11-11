@@ -1,5 +1,6 @@
 import { WIDTH, HEIGHT, normalize, membersAt, occupancy, toCsv } from './core.mjs';
 import { publishedPlan, RELEASE, UPDATED_LABEL, SOURCE_LABEL, ACADEMIC_ONLY, DISPLAY_NOTES } from './public-plan.mjs';
+import { numberedLayout } from './table-grid.mjs';
 import { firebaseConfig, eventId } from './firebase-config.js';
 const $ = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if(cls)n.className=cls; if(text!=null)n.textContent=text; return n; };
@@ -59,7 +60,7 @@ async function connectPublic() {
    const instance=app.getApps().length?app.getApp():app.initializeApp(firebaseConfig),db=F.getFirestore(instance);
    F.onSnapshot(F.doc(db,'publicPlans',eventId),{includeMetadataChanges:true},snap=>{
      if(!snap.exists()){setStatus(`공개 배치안 · ${UPDATED_LABEL} · 실시간 공개본은 아직 등록되지 않았습니다.`);return;}
-     try { const d=snap.data(); if(d.releaseId!==RELEASE){setStatus(`공개 배치안 · ${UPDATED_LABEL} · 최신 명단 기준 고정본을 표시합니다.`);return;} const incoming=normalize(d); if(incoming.rev<liveRevision)return; liveRevision=incoming.rev; state=incoming; render();
+     try { const d=snap.data(); if(d.releaseId!==RELEASE){setStatus(`공개 배치안 · ${UPDATED_LABEL} · 최신 명단 기준 고정본을 표시합니다.`);return;} const incoming=numberedLayout(d); if(incoming.rev<liveRevision)return; liveRevision=incoming.rev; state=incoming; render();
        setStatus(snap.metadata.fromCache?'마지막으로 읽은 공개 배치 · 서버 연결 확인 중':`공개 배치 실시간 연결 · 변경 ${state.rev} · 보기 전용`,snap.metadata.fromCache?'wait':'ok');
      } catch { setStatus('공개 저장소 데이터 형식 확인이 필요합니다. 현재 표시된 배치를 유지합니다.','wait'); }
    },()=>setStatus(`공개 배치안 · ${UPDATED_LABEL} · 현재 고정본(실시간 공개 연결 전)`));

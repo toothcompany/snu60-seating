@@ -1,10 +1,11 @@
-import { emptyState, normalize } from './core.mjs';
+import { emptyState } from './core.mjs';
+import { numberedLayout } from './table-grid.mjs';
 
 // Public fields only. The owner explicitly requested login-free viewing.
 // Contact details, addresses, response notes, and administrator emails are NOT included.
 export const RELEASE = '2026-11-10-roster-v2';
 export const SOURCE_LABEL = '11월 9일 최종 참석자 명단 + 요청 수정사항 반영';
-export const UPDATED_LABEL = '2026.11.10 배치 검토안';
+export const UPDATED_LABEL = '2026.11.11 테이블 번호 정렬';
 const D = '서울대학교 예방치학교실';
 // First value is the original roster sequence. Two family records remain distinct people.
 const groups = [
@@ -135,9 +136,9 @@ const groups = [
 export const ACADEMIC_ONLY = ['r261109-227'];
 export const DISPLAY_NOTES = [
   '무대 쪽을 1번 좌석으로 하여 시계방향으로 표시합니다. 좌석번호는 의전 서열을 뜻하지 않습니다.',
-  '1·2·3번 혼합 편성 / 프라팁·백대일 옆자리 / 장덕수·이원재 앞쪽 / 김남희 8번 / 조현재·이병진 6번.',
-  '4·5번 위치 교환. 송영하·이봉호의 실제 위치를 유지하여 현재 각각 5번 8석, 4번 1석입니다. 7·8번도 위치만 교환했습니다.',
-  '김희찬·허준석은 7번의 연속 좌석입니다. 유한양행은 김문섭 이사 한 분입니다.',
+  '테이블 번호는 무대 앞줄 왼쪽부터 1~3, 4~6, 7~9, 10~12번입니다. 원을 다른 테이블에 놓으면 두 명단이 좌석 순서 그대로 자리를 바꿉니다.',
+  '초기 배치에서 프라팁·백대일은 옆자리, 장덕수·이원재는 앞줄, 김남희는 셋째 줄, 조현재·이병진은 6번입니다.',
+  '초기 배치에서 송영하는 4번 8석, 이봉호는 5번 1석입니다. 김희찬·허준석은 8번의 연속 좌석입니다. 유한양행 참석자는 김문섭 이사 한 분입니다.',
   '소속/비고는 최종 명단의 표기를 기준으로 합니다. 교실원 표기는 현직 직장을 의미하지 않을 수 있습니다.',
   '신종학은 학술행사만 참석하는 것으로 기재되어 만찬 좌석을 배정하지 않았습니다.'
 ];
@@ -151,5 +152,5 @@ export function publishedPlan() {
     state.attendees.push({ id: `r261109-${sourceId}`, name, affiliation: affiliation ?? D, tableId: `t${i+1}`, order });
   }));
   state.attendees.push({id:'r261109-227',name:'신종학',affiliation:'치과신문',tableId:null,order:0});
-  return normalize(state);
+  return numberedLayout(state);
 }

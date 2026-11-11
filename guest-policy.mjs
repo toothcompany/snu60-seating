@@ -1,16 +1,20 @@
-import {normalize, applyOperation} from './core.mjs';
+import {copy, applyOperation} from './core.mjs';
+import {numberedLayout} from './table-grid.mjs';
 export const SHARED_DOCUMENT = 'sharedPlans/snu60';
 // Anonymous authentication is automatic: visitors never enter an account or password.
 export function mayEdit({user, connected, pending, online}) {
   return Boolean(user?.uid && connected && !pending && online);
 }
 export function startingState(remote, seed) {
-  if (remote != null) return normalize(remote);
-  const s = normalize(seed); s.rev = 0; return s;
+  if (remote != null) return numberedLayout(remote);
+  const s = numberedLayout(seed); s.rev = 0; return s;
 }
-export function prepareChange(current, operation) {
-  const before = normalize(current);
-  const next = applyOperation(before, operation);
+export function prepareChange(current, operation, rawCurrent=current) {
+  // Rules compare this to the *exact* old document, including legacy coordinates.
+  // Exclude Firestore metadata such as updatedAt, but never renumber the audit copy.
+  const {version,rev,tables,attendees} = rawCurrent ?? current;
+  const before = copy({version,rev,tables,attendees});
+  const next = numberedLayout(applyOperation(numberedLayout(current), operation));
   next.rev = before.rev + 1;
   return {before, next};
 }
