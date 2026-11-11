@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { checkSharedEditor } from './browser-edit.mjs';
 const server=spawn('python3',['-m','http.server','4173','--bind','127.0.0.1'],{stdio:'ignore'});
 let browser;
 try {
@@ -13,7 +14,7 @@ try {
  // Prove the public initial plan renders even with Firebase unreachable and no Google login.
  await page.route('https://www.gstatic.com/**',r=>r.abort());
  await page.goto('http://127.0.0.1:4173/',{waitUntil:'networkidle'});
- await page.waitForSelector('.tableGroup');
+ await page.waitForSelector('.tableDisc');
  assert.equal(await page.locator('.tableGroup').count(),12);
  assert.equal(await page.locator('#tables .seat').count(),99);
  assert.equal(await page.locator('#people .personRow').count(),100);
@@ -41,4 +42,5 @@ try {
  await page.goto('http://127.0.0.1:4173/editor.html',{waitUntil:'networkidle'});
  assert.equal(await page.locator('#login').count(),1);assert.equal(await page.locator('#seed').isDisabled(),true);assert.equal(await page.locator('#import').isDisabled(),true);
  console.log('PASS: anonymous viewer renders 12 tables, 99 occupied seats, 100 roster entries, search, academic-only filter, desktop and mobile; editing remains locked without login.');
+ await checkSharedEditor(browser);
 } finally { if(browser)await browser.close();server.kill(); }

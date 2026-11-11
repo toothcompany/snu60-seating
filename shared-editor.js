@@ -44,7 +44,7 @@ function render(){
  const previous=$('filter').value;$('filter').replaceChildren(new Option('모든 테이블','all'),new Option('미배정 / 학술행사만','none'));
  for(const t of state.tables.slice().sort((a,b)=>a.number-b.number))$('filter').add(new Option(`${t.number}번 (${membersAt(state,t.id).length}/${t.capacity})`,t.id));
  $('filter').value=Array.from($('filter').options).some(o=>o.value===previous)?previous:'all';
- for(const t of state.tables){
+ for(const t of state.tables.slice().sort((a,b)=>a.number-b.number)){
   const group=make('div','tableGroup');group.dataset.tid=t.id;group.style.left=t.x+'px';group.style.top=t.y+'px';
   const occ=occupancy(state,t),disc=make('button',`tableDisc ${occ.kind} ${t.number<=3?'vip':''}`);disc.type='button';disc.dataset.tableHandle=t.id;
   disc.title=fixedHall(state)?'다른 테이블에 놓아 두 명단 교환 · 클릭해서 정원 수정':'끌어서 테이블과 명단 함께 이동 · 클릭해서 정원 수정';disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);

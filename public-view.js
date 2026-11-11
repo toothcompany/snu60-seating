@@ -31,7 +31,7 @@ function render() {
   const old=$('filter').value; $('filter').replaceChildren(new Option('모든 테이블','all'),new Option('만찬 미배정 / 학술행사만','none'));
   for(const t of state.tables.slice().sort((a,b)=>a.number-b.number))$('filter').add(new Option(`${t.number}번 테이블 (${membersAt(state,t.id).length}/${t.capacity})`,t.id));
   if([...$('filter').options].some(o=>o.value===old))$('filter').value=old;
-  for(const t of state.tables) {
+  for(const t of state.tables.slice().sort((a,b)=>a.number-b.number)) {
     const g=make('div','tableGroup'); g.dataset.tid=t.id; g.style.left=t.x+'px'; g.style.top=t.y+'px';
     const occ=occupancy(state,t), disc=make('button',`tableDisc ${occ.kind} ${t.number<=3?'vip':''}`); disc.type='button';
     disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);
