@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {checkCapacity} from './browser-capacity.mjs';
 
 // Served via Playwright's route.fulfill; the browser never contacts Firebase.
 // One storage write commits both the plan and its history atomically. A second
@@ -67,7 +68,7 @@ export async function checkSharedEditor(browser,origin='http://127.0.0.1:4173') 
   });
   const open=async (pg,path)=>{pg.on('pageerror',e=>errors.push(e.message));await pg.goto(origin+path,{waitUntil:'networkidle'});await pg.waitForSelector('#tables .tableDisc');};
   const selectUser=async(pg,name)=>{await pg.evaluate(n=>sessionStorage.setItem('qa:select',n),name);await pg.locator('#login').click();};
-  const readOnly=async (pg,seatCount=99)=>{
+  const readOnly=async (pg,seatCount=100)=>{
     for(const id of ['add','import','publish','history','undo']) {
       const button=pg.locator('#'+id);
       assert.ok(await button.isDisabled()||await button.isHidden(),id+' must be disabled or hidden');
@@ -107,7 +108,7 @@ export async function checkSharedEditor(browser,origin='http://127.0.0.1:4173') 
       await a.locator('#logout').click();await a.waitForFunction(()=>!document.querySelector('#login').hidden);
     }
     await selectUser(a,'admin');await unlocked(a);
-    console.log('PASS: signed-out, unlisted Google and viewer accounts can see 99 seats but cannot edit or open private history; approved admin can edit.');
+    console.log('PASS: signed-out, unlisted Google and viewer accounts can see 100 occupied seats but cannot edit or open private history; approved admin can edit.');
     const before=await layout(a),[first,second]=before;
     assert.deepEqual(before.map(s=>s.number),Array.from({length:12},(_,i)=>i+1));
     assert.equal(new Set(before.map(s=>s.y)).size,4);assert.equal(new Set(before.map(s=>s.x)).size,3);
@@ -137,11 +138,11 @@ export async function checkSharedEditor(browser,origin='http://127.0.0.1:4173') 
     // This tab signs in separately; its approved Google account has an editor
     // role instead of admin, sharing the same test-only live seating document.
     const v=await ctx.newPage();await open(v,'/index.html?qa=public-viewer');
-    await seat(v,first.id,label).waitFor();await readOnly(v,100);
+    await seat(v,first.id,label).waitFor();await readOnly(v,101);
     const b=await ctx.newPage();await open(b,'/index.html?qa=editor-b');await undoEnabled(b,false);
     await selectUser(b,'editor');await unlocked(b);await undoEnabled(b,false);await move(b,label,second.id);await committed(b,8);
     assert.notEqual((await read(b)).updatedBy,actorA);await seat(a,second.id,label).waitFor();await undoEnabled(a,false);
-    await seat(v,second.id,label).waitFor();await readOnly(v,100);
+    await seat(v,second.id,label).waitFor();await readOnly(v,101);
     await a.locator('h1').click();await a.keyboard.press('Meta+z');assert.equal((await read(a)).rev,8);
     console.log('PASS: authorized Google editor changed a seat; an unsigned live viewer saw the change without edit access; stale undo left the edit intact.');
 
@@ -157,6 +158,7 @@ export async function checkSharedEditor(browser,origin='http://127.0.0.1:4173') 
     await seat(a,first.id,label).waitFor();
     assert.equal((await read(a)).rev,9);
     console.log('PASS: sign-out removed editing/history access while the latest shared plan stayed readable.');
+    await checkCapacity({page:b,viewer:v,read,committed});
     assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);
   } finally {await ctx.close();}
 }

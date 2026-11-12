@@ -3,45 +3,47 @@ import assert from 'node:assert/strict';
 import {prepareRosterRevision} from '../roster-update.mjs';
 import {publishedPlan} from '../public-plan.mjs';
 import {membersAt} from '../core.mjs';
-
-const pairs=[
-  ['정연호','r261109-228','정진희','r261109-132'],
-  ['유부강','r261109-229','최은재','r261109-188'],
-];
-function oldPlan(){
-  const p=publishedPlan(); p.rev=13;
-  for(const [name,id,newName] of pairs)Object.assign(p.attendees.find(a=>a.name===newName),{name,id,affiliation:'제이크 이미지 연구소'});
-  return p;
+const pairs=[['정연호','r261109-228','정진희','r261109-132'],['유부강','r261109-229','최은재','r261109-188']];
+const find=(p,n)=>p.attendees.find(a=>a.name===n);
+const seated=p=>p.attendees.filter(a=>a.tableId!=null).length;
+const sum=p=>p.tables.reduce((s,t)=>s+t.capacity,0);
+function legacy(previousFix=false){
+ const p=publishedPlan();p.rev=229;
+ for(const t of p.tables)t.capacity=t.number<=9?8:9;
+ const s=find(p,'신종학');s.tableId=null;s.order=0;
+ p.attendees=p.attendees.filter(a=>!pairs.some(x=>x[1]===a.id));
+ if(!previousFix)for(const [name,id,newName] of pairs)Object.assign(find(p,newName),{name,id,affiliation:'제이크 이미지 연구소'});
+ return p;
 }
-test('seed uses original registrant identities, and no photographer affiliation is carried over',()=>{
-  const p=publishedPlan(); const t=p.tables.find(t=>t.number===12); const seats=membersAt(p,t.id);
-  assert.deepEqual(seats.slice(7).map(a=>[a.id,a.name,a.affiliation]),pairs.map(([,,name,id])=>[id,name,'교실원']));
-  assert.deepEqual(p.attendees.filter(a=>a.name==='정연호'||a.name==='유부강'),[]);
+for(const previousFix of [true,false])test('both previous event versions reconcile to 102 people, 100 placed, 2 reserved: '+previousFix,()=>{
+ const p=legacy(previousFix);const a=p.attendees.at(0);a.order=0.25; p.tables[0].x+=31;const copy=structuredClone(p);
+ const {status,before,next}=prepareRosterRevision({...p,updatedBy:'admin',lastAction:'unrelated'});assert.equal(status,'applied');assert.equal(next.rev,230);assert.deepEqual(before,copy);assert.deepEqual(p,copy);assert.deepEqual(a,find(next,a.name));
+ assert.equal(next.attendees.length,102);assert.equal(new Set(next.attendees.map(a=>a.id)).size,102);assert.equal(seated(next),100);assert.equal(sum(next),102);
+ let touchedIDs= new Set(['r261109-227',...pairs.flatMap(x=>[x[1],x[3]])]);
+ for(const old of p.attendees.filter(a=>!touchedIDs.has(a.id)))assert.deepEqual(find(next,old.name),old);
+ for(const [oldName,oldId,newName,newId] of pairs){const incoming=find(next,newName),old=find(next,oldName);assert.equal(incoming.id,newId);assert.equal(old.id,oldId);assert.equal(old.tableId,null);assert.equal(incoming.affiliation,'교실원');const ref=find(p,previousFix?newName:oldName);assert.equal(incoming.tableId,ref.tableId);assert.equal(incoming.order,ref.order);}
+ const b=find(next,'백인채'),s=find(next,'신종학');const list=membersAt(next,b.tableId);assert.equal(list.indexOf(s),list.indexOf(b)+1);assert.deepEqual(b,find(p,'백인채'));assert.equal(prepareRosterRevision(next).status,'unchanged');
 });
-test('uses actual current positions without reformatting tables, the audit snapshot or any other participant',()=>{
-  const raw=oldPlan(); raw.tables[0].x=245; const old=raw.attendees.find(a=>a.id==='r261109-228');
-  old.tableId='t5';old.order=14; const input=structuredClone(raw); const r=prepareRosterRevision({...raw,lastAction:'other',updatedBy:'uid'});
-  assert.equal(r.status,'applied');assert.equal(r.next.rev,14);assert.deepEqual(r.before,input);assert.deepEqual(raw,input);
-  assert.deepEqual(r.next.tables,input.tables);assert.equal(r.next.attendees.length,input.attendees.length);
-  r.next.attendees.forEach((a,i)=>{const orig=input.attendees[i];if(pairs.some(x=>x[1]===orig.id)){assert.equal(a.tableId,orig.tableId);assert.equal(a.order,orig.order);}else assert.deepEqual(a,orig);});
-  assert.equal(prepareRosterRevision(r.next).status,'unchanged');
+test('uses most recent live seating and existing reserve room without moving or shrinking other seats',()=>{
+ const p=legacy();const b=find(p,'백인채'),c=find(p,'정연호');b.tableId='t5';b.order=14;c.tableId='t3';c.order=22;
+ p.tables.find(t=>t.id==='t10').capacity=15;
+ const {next}=prepareRosterRevision(p);
+ assert.equal(find(next,'신종학').tableId,'t5');assert.equal(find(next,'정진희').tableId,'t3');assert.equal(find(next,'정진희').order,22);
+ assert.equal(next.tables.find(t=>t.id==='t10').capacity,15);assert.equal(next.tables.find(t=>t.id==='t12').capacity,9);assert.equal(next.tables.find(t=>t.id==='t11').capacity,9);
 });
-test('aborts both changes on ambiguous imports, drift, conflicts or unassigned photographers',()=>{
-  for(const alter of [p=>{p.attendees.push({...p.attendees.find(a=>a.name==='정연호'),id:'copy'});},
-   p=>{p.attendees.find(a=>a.name==='유부강').name='다른 사람';},
-   p=>{p.attendees.find(a=>a.name==='정연호').tableId=null;},
-   p=>{p.attendees.find(a=>a.name==='유부강').id='custom';p.attendees.find(a=>a.name==='유부강').affiliation='다른 소속';},
-   p=>{p.attendees.push({id:'added',name:'최은재',affiliation:'',order:3,tableId:'t9'});}]) {
-    const p=oldPlan();alter(p); const orig=structuredClone(p);assert.throws(()=>prepareRosterRevision(p));assert.deepEqual(p,orig);
-  }
+test('if the old shared-seat scheme was entered, give Baek an independent seat next to Shin; if both already seated keep assignments',()=>{
+ const p=legacy(true),b=find(p,'백인채'),s=find(p,'신종학');s.tableId=b.tableId;s.order=b.order;b.tableId=null;
+ const n=prepareRosterRevision(p).next;const list=membersAt(n,s.tableId);assert.equal(list.indexOf(find(n,'백인채')),list.indexOf(find(n,'신종학'))+1);
+ b.tableId='t1';b.order=3;const q=prepareRosterRevision(p).next;assert.equal(find(q,'백인채').tableId,'t1');assert.equal(find(q,'신종학').tableId,s.tableId);
 });
-test('safe manual partial correction retained; renamed photographer IDs repaired, unknown existing attendee IDs preserved',()=>{
-  let p=oldPlan();let rec=p.attendees.find(a=>a.name==='정연호');Object.assign(rec,{name:'정진희',affiliation:'제이크 이미지 연구소'});
-  const n=prepareRosterRevision(p).next;const a=n.attendees.find(a=>a.name==='정진희');assert.equal(a.id,'r261109-132');assert.equal(a.affiliation,'교실원');
-  p=oldPlan();rec=p.attendees.find(a=>a.name==='정연호');Object.assign(rec,{name:'정진희',id:'operator-added-id',affiliation:'입력한 소속',tableId:'t10',order:1});
-  const n2=prepareRosterRevision(p).next;assert.deepEqual(n2.attendees.find(a=>a.name==='정진희'),rec);
+test('already-added guest or import ID is not duplicated; retain current affiliation and position when already seated',()=>{
+ const p=legacy();const old=find(p,'정연호');old.id='photographer-2';
+ const custom={name:'정진희',id:'added',affiliation:'사용자 편집',tableId:'t4',order:15};p.attendees.push(custom);
+ const n=prepareRosterRevision(p).next;assert.deepEqual(find(n,'정진희'),custom);assert.equal(find(n,'정연호').id,'photographer-2');assert.equal(find(n,'정연호').tableId,null);
+ const p2=legacy();Object.assign(find(p2,'정연호'),{name:'정진희'});const n2=prepareRosterRevision(p2).next;assert.equal(find(n2,'정연호').id,'r261109-228');assert.equal(find(n2,'정진희').id,'r261109-132');assert.equal(find(n2,'정진희').affiliation,'교실원');
 });
-test('can use precise name & affiliation following an import that replaced all row IDs',()=>{
- const p=oldPlan();p.attendees=p.attendees.map((a,i)=>({...a,id:'import-'+i}));const n=prepareRosterRevision(p).next;
- for(const [,,name,id] of pairs)assert.equal(n.attendees.find(a=>a.name===name).id,id);
+test('cancel atomically on identity conflict or when there is no trustworthy seat to inherit',()=>{
+ for(const change of [p=>p.attendees.push({...find(p,'정연호'),id:'other'}),p=>{find(p,'유부강').id='import2';find(p,'유부강').affiliation='다른 회사';},p=>{find(p,'유부강').tableId=null;},p=>{find(p,'백인채').tableId=null;},p=>{find(p,'최상관').id='r261109-132';},p=>{find(p,'신종학').name='동명이인 아님';}]){
+  const p=legacy();change(p);const old=structuredClone(p);assert.throws(()=>prepareRosterRevision(p));assert.deepEqual(p,old);
+ }
 });

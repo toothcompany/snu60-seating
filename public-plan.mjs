@@ -1,11 +1,12 @@
 import { emptyState } from './core.mjs';
 import { numberedLayout } from './table-grid.mjs';
+import {prepareRosterRevision} from './roster-update.mjs';
 
 // Public fields only. The owner explicitly requested login-free viewing.
 // Contact details, addresses, response notes, and administrator emails are NOT included.
-export const RELEASE = '2026-11-10-roster-v2';
+export const RELEASE = '2026-11-12-roster-102';
 export const SOURCE_LABEL = '11월 9일 최종 참석자 명단 + 요청 수정사항 반영';
-export const UPDATED_LABEL = '2026.11.12 추가 참석자 반영';
+export const UPDATED_LABEL = '2026.11.12 참석 102명·만찬 좌석 수정';
 const D = '서울대학교 예방치학교실';
 // First value is the original roster sequence. Two family records remain distinct people.
 const groups = [
@@ -133,14 +134,15 @@ const groups = [
     [188, '최은재', '교실원']
   ]
 ];
-export const ACADEMIC_ONLY = ['r261109-227'];
+export const ACADEMIC_ONLY = [];
+export const NO_DINNER_SEAT = ['r261109-228','r261109-229'];
 export const DISPLAY_NOTES = [
   '무대 쪽을 1번 좌석으로 하여 시계방향으로 표시합니다. 좌석번호는 의전 서열을 뜻하지 않습니다.',
   '테이블 번호는 무대 앞줄 왼쪽부터 1~3, 4~6, 7~9, 10~12번입니다. 원을 다른 테이블에 놓으면 두 명단이 좌석 순서 그대로 자리를 바꿉니다.',
   '초기 배치에서 프라팁·백대일은 옆자리, 장덕수·이원재는 앞줄, 김남희는 셋째 줄, 조현재·이병진은 6번입니다.',
   '초기 배치에서 송영하는 4번 8석, 이봉호는 5번 1석입니다. 김희찬·허준석은 8번의 연속 좌석입니다. 유한양행 참석자는 김문섭 이사 한 분입니다.',
   '소속/비고는 최종 명단의 표기를 기준으로 합니다. 교실원 표기는 현직 직장을 의미하지 않을 수 있습니다.',
-  '신종학은 학술행사만 참석하는 것으로 기재되어 만찬 좌석을 배정하지 않았습니다.'
+  '11월 12일 확인된 참석자는 102명입니다. 정진희·최은재에게 만찬 좌석을 배정하고, 정연호·유부강은 촬영 인원으로 명단에 남깁니다. 신종학과 백인채는 각자 자리가 있으며 초기안에 예비 의자 두 개를 마련했습니다.'
 ];
 export function publishedPlan() {
   const state = emptyState();
@@ -152,5 +154,6 @@ export function publishedPlan() {
     state.attendees.push({ id: `r261109-${sourceId}`, name, affiliation: affiliation ?? D, tableId: `t${i+1}`, order });
   }));
   state.attendees.push({id:'r261109-227',name:'신종학',affiliation:'치과신문',tableId:null,order:0});
-  return numberedLayout(state);
+  const planned=prepareRosterRevision(numberedLayout(state)).next; planned.rev=0;
+  return numberedLayout(planned);
 }

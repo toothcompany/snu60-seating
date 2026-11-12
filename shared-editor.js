@@ -1,7 +1,7 @@
 import {WIDTH,HEIGHT,copy,normalize,membersAt,occupancy,personSignature,rowsToState,parseCsv,toCsv} from './core.mjs';
 import {fixedHall,dropTableAt} from './table-grid.mjs';
 import {firebaseConfig} from './firebase-config.js';
-import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=1112-rsvp';
+import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=1112-seating102';
 import {SHARED_DOCUMENT,editorRole,googleMemberEmail,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs?v=google-roles1';
 import {editingWindowOpen} from './temporary-access.mjs';
 
@@ -48,28 +48,46 @@ function fit(){setZoom(($('viewport').clientWidth-16)/WIDTH);}
 function render(){
  syncButtons();$('tables').replaceChildren();
  const assigned=state.attendees.filter(a=>a.tableId!==null).length,capacity=state.tables.reduce((n,t)=>n+t.capacity,0);
- $('summary').textContent=`${state.tables.length}개 테이블 · 배정 ${assigned}명 / ${capacity}석 · 미배정 ${state.attendees.length-assigned}명`;
- const previous=$('filter').value;$('filter').replaceChildren(new Option('모든 테이블','all'),new Option('미배정 / 학술행사만','none'));
+ const empty=state.tables.reduce((n,t)=>n+Math.max(0,-occupancy(state,t).delta),0);
+ const excess=state.tables.reduce((n,t)=>n+Math.max(0,occupancy(state,t).delta),0);
+ $('summary').textContent=`전체 참석 ${state.attendees.length}명 · 만찬 배정 ${assigned}명 / ${capacity}석 · 빈자리 ${empty}석 · 만찬 미배정 ${state.attendees.length-assigned}명`+(excess?` · 정원 초과 ${excess}명`:'');
+ const previous=$('filter').value;$('filter').replaceChildren(new Option('모든 테이블','all'),new Option('만찬 미배정','none'));
  for(const t of state.tables.slice().sort((a,b)=>a.number-b.number))$('filter').add(new Option(`${t.number}번 (${membersAt(state,t.id).length}/${t.capacity})`,t.id));
  $('filter').value=Array.from($('filter').options).some(o=>o.value===previous)?previous:'all';
  for(const t of state.tables.slice().sort((a,b)=>a.number-b.number)){
   const group=make('div','tableGroup');group.dataset.tid=t.id;group.style.left=t.x+'px';group.style.top=t.y+'px';
   const occ=occupancy(state,t),disc=make('button',`tableDisc ${occ.kind} ${t.number<=3?'vip':''}`);disc.type='button';disc.dataset.tableHandle=t.id;
-  disc.title=fixedHall(state)?'다른 테이블에 놓아 두 명단 교환 · 클릭해서 정원 수정':'끌어서 테이블과 명단 함께 이동 · 클릭해서 정원 수정';disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);
+  disc.title=!editable()?'테이블 좌석 정보 보기':fixedHall(state)?'다른 테이블에 놓아 두 명단 교환 · 클릭해서 정원 수정':'끌어서 테이블과 명단 함께 이동 · 클릭해서 정원 수정';disc.setAttribute('aria-label',`${t.number}번 테이블, ${occ.count}명, 정원 ${t.capacity}명`);
   disc.append(make('strong','',t.number+'번'),make('span','count',`${occ.count} / ${t.capacity}명`),make('small','',occ.delta>0?`${occ.delta}명 초과`:occ.delta<0?`${-occ.delta}석 여유`:'정원 일치'));group.append(disc);
-  const people=membersAt(state,t.id),slots=Math.max(t.capacity,people.length),radius=slots>12?174:151;
+  const people=membersAt(state,t.id),vacancies=Math.max(0,t.capacity-people.length),drawEmpty=Math.min(vacancies,3);
+  // Up to three visible empty-seat markers. Very large capacities remain legible;
+  // remaining empty chairs are counted together on the final marker.
+  const slots=people.length+drawEmpty,radius=slots>12?174:151;
   people.forEach((a,i)=>{
    const rad=(-90+i*360/slots)*Math.PI/180,b=make('button','seat'+(a.name.length>10?' long':''));b.type='button';b.dataset.aid=a.id;b.style.left=(Math.cos(rad)*radius-71)+'px';b.style.top=(Math.sin(rad)*radius-19.5)+'px';
    b.title=`${a.name} · ${a.affiliation||'소속 미입력'} · ${t.number}번 ${i+1}석`;b.append(make('span','num',i+1),make('span','name',a.name));group.append(b);
-  });$('tables').append(group);
+  });
+  for(let j=0;j<drawEmpty;j++){
+   const i=people.length+j,rad=(-90+i*360/slots)*Math.PI/180,remaining=vacancies-j;
+   const e=make('span','vacant');e.style.left=(Math.cos(rad)*radius-63)+'px';e.style.top=(Math.sin(rad)*radius-18)+'px';
+   const grouped=j===drawEmpty-1&&remaining>1;
+   if(!grouped)e.append(make('small','',i+1));
+   e.append(document.createTextNode(grouped?`빈자리 ${remaining}석`:'빈자리'));
+   group.append(e);
+  }
+  $('tables').append(group);
  }
  renderPeople();
+}
+function unseatedBadge(a){
+ const name=String(a.name).normalize('NFC').trim(),studio=String(a.affiliation||'').normalize('NFC').replace(/\s+/g,'');
+ return ['정연호','유부강'].includes(name)&&studio==='제이크이미지연구소'?'촬영 · 좌석 없음':'만찬 미배정';
 }
 function renderPeople(){
  $('people').replaceChildren();const q=$('search').value.trim().toLowerCase(),filter=$('filter').value;
  const list=state.attendees.filter(a=>(filter==='all'||(filter==='none'?a.tableId===null:a.tableId===filter))&&(!q||`${a.name} ${a.affiliation}`.toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
  $('rosterCount').textContent=state.attendees.length;
- for(const a of list){const b=make('button','personRow');b.type='button';b.dataset.aid=a.id;const info=make('span','info');info.append(make('strong','',a.name),make('small','',a.affiliation||'소속 미입력'));const t=state.tables.find(t=>t.id===a.tableId),seat=t?membersAt(state,t.id).findIndex(x=>x.id===a.id)+1:null;b.append(info,make('span','badge',t?`${t.number}번 · ${seat}석`:'미배정'));$('people').append(b);}
+ for(const a of list){const b=make('button','personRow');b.type='button';b.dataset.aid=a.id;const info=make('span','info');info.append(make('strong','',a.name),make('small','',a.affiliation||'소속 미입력'));const t=state.tables.find(t=>t.id===a.tableId),seat=t?membersAt(state,t.id).findIndex(x=>x.id===a.id)+1:null;b.append(info,make('span',t?'badge':'badge staffNoSeat',t?`${t.number}번 · ${seat}석`:unseatedBadge(a)));$('people').append(b);}
  if(!list.length)$('people').append(make('p','muted','조건에 맞는 참석자가 없습니다.'));
 }
 async function mutate(operation,label,kind='edit'){
@@ -105,7 +123,7 @@ async function mutate(operation,label,kind='edit'){
  }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(editingWindowOpen()?connectionError(error):'공동 편집 기간이 끝났습니다.');return false;}
  finally{clearTimeout(waitTimer);pending=false;render();}
 }
-function openEditor(title){$('editorTitle').textContent=title;$('editorFields').replaceChildren();$('remove').hidden=true;$('save').hidden=!editable();$('editor').showModal();}
+function openEditor(title){$('save').textContent='저장';$('editorTitle').textContent=title;$('editorFields').replaceChildren();$('remove').hidden=true;$('save').hidden=!editable();$('editor').showModal();}
 function field(label,value,type='text'){const id='f'+Math.random().toString(36).slice(2),l=make('label','',label),i=make('input');l.htmlFor=id;i.id=id;i.type=type;i.value=value??'';$('editorFields').append(l,i);return i;}
 function tableSelect(value,label='배정 테이블'){const id='s'+Math.random().toString(36).slice(2),l=make('label','',label),s=make('select');l.htmlFor=id;s.id=id;s.add(new Option('미배정',''));for(const t of state.tables.slice().sort((a,b)=>a.number-b.number))s.add(new Option(`${t.number}번 · ${membersAt(state,t.id).length}/${t.capacity}명`,t.id));s.value=value??'';$('editorFields').append(l,s);return s;}
 function editPerson(id){
@@ -117,12 +135,44 @@ function editPerson(id){
 function addPerson(){if(!editable())return;openEditor('참석자 추가');const name=field('성명',''),aff=field('소속',''),target=tableSelect(null);name.required=true;name.maxLength=80;aff.maxLength=200;
  formAction=async()=>{if(!name.value.trim())return;const person={id:crypto.randomUUID(),name:name.value.trim(),affiliation:aff.value.trim(),tableId:target.value||null};if(await mutate({type:'addPerson',person},'참석자 추가'))$('editor').close();};
 }
+function capacityFields(host,t){
+ const label=make('label','','테이블 정원 (1~30석)'),row=make('div','capacityStep'),cap=make('input');
+ cap.id='capacityInput';cap.type='number';cap.inputMode='numeric';cap.step='1';cap.min='1';cap.max='30';cap.required=true;
+ cap.value=t.capacity;cap.disabled=!editable();label.htmlFor=cap.id;
+ const minus=make('button','','−'),plus=make('button','','＋');
+ for(const [button,by,text] of [[minus,-1,'정원 1석 줄이기'],[plus,1,'정원 1석 늘리기']]){
+  button.type='button';button.setAttribute('aria-label',text);button.title=text;
+  button.onclick=()=>{if(editable()){const current=Number(cap.value);cap.value=Math.min(30,Math.max(1,(Number.isInteger(current)&&current>=1&&current<=30?current:t.capacity)+by));update();}};
+ }
+ const note=make('p','capacityDetails');note.id='capacityProjection';note.setAttribute('aria-live','polite');cap.setAttribute('aria-describedby',note.id);
+ function update(){const val=Number(cap.value),n=membersAt(state,t.id).length,valid=cap.value!==''&&Number.isInteger(val)&&val>=1&&val<=30;
+  minus.disabled=!editable()||(valid&&val<=1);plus.disabled=!editable()||(valid&&val>=30);
+  note.className='capacityDetails'+(valid?(val<n?' over':val>n?' under':''):'');
+  note.textContent=valid?`현재 배정 ${n}명 · 정원 ${val}석 → `+(val>n?`빈자리 ${val-n}석`:val<n?`${n-val}명 초과 (기존 배정은 유지됩니다)`:'빈자리 없음'):'1부터 30까지 정수로 입력하세요.';
+ }
+ cap.oninput=update;row.append(minus,cap,plus);host.append(label,row,note);update();return cap;
+}
+async function saveCapacity(t,cap){
+ if(!editable()||!cap.reportValidity())return;
+ const n=Number(cap.value);if(n===t.capacity){$('editor').close();return;}
+ if(await mutate({type:'capacity',id:t.id,capacity:n,expectedCapacity:t.capacity},`${t.number}번 테이블 정원 ${t.capacity}→${n}석`))$('editor').close();
+}
+function chooseCapacity(){
+ if(!editable())return;openEditor('테이블 정원 조정');$('save').textContent='정원 저장';
+ const host=$('editorFields'),l=make('label','','조정할 테이블'),sel=make('select');sel.id='capacityTable';l.htmlFor=sel.id;
+ for(const t of state.tables.slice().sort((a,b)=>a.number-b.number))sel.add(new Option(`${t.number}번 테이블 · 배정 ${membersAt(state,t.id).length}명 / ${t.capacity}석`,t.id));
+ const selected=$('filter').value;if(Array.from(sel.options).some(o=>o.value===selected))sel.value=selected;
+ const area=make('div');host.append(l,sel,area);
+ const show=()=>{const t=state.tables.find(t=>t.id===sel.value);area.replaceChildren();if(!t){formAction=null;return;}const cap=capacityFields(area,t);formAction=()=>saveCapacity(t,cap);};
+ sel.onchange=show;show();sel.focus();
+}
+$('capacityTool').onclick=chooseCapacity;
 function editTable(id){
  const t=state.tables.find(t=>t.id===id);if(!t)return;const expectedRev=state.rev;openEditor(`${t.number}번 테이블`);
- const cap=field('정원 (1~30명)',t.capacity,'number');cap.min=1;cap.max=30;cap.step=1;cap.disabled=!editable();const swap=tableSelect(null,'테이블 전체 위치 교환');for(const option of Array.from(swap.options))if(option.value===id)option.remove();swap.options[0].text='교환할 테이블 선택';
+ const cap=capacityFields($('editorFields'),t);const swap=tableSelect(null,'테이블 전체 위치 교환');for(const option of Array.from(swap.options))if(option.value===id)option.remove();swap.options[0].text='교환할 테이블 선택';
  const b=make('button','','선택한 테이블과 위치 교환');b.type='button';b.disabled=!editable();swap.disabled=!editable();$('editorFields').append(b,make('p','muted',fixedHall(state)?'번호는 위치에 고정됩니다. 두 테이블의 참석자와 정원이 좌석 순서 그대로 자리를 바꿉니다.':'두 테이블의 위치를 명단과 함께 교환합니다.'));
  b.onclick=async()=>{if(!swap.value){toast('교환할 테이블을 선택하세요.');return;}if(await mutate({type:'swapTables',id,otherId:swap.value,expectedRev},'테이블 위치 교환'))$('editor').close();};
- formAction=async()=>{if(await mutate({type:'capacity',id,capacity:Number(cap.value),expectedCapacity:t.capacity},'테이블 정원 변경'))$('editor').close();};
+ formAction=()=>saveCapacity(t,cap);
 }
 $('editForm').onsubmit=async e=>{e.preventDefault();if(!editable())return;try{await formAction?.();}catch(error){toast(connectionError(error));}};$('cancel').onclick=()=>$('editor').close();$('add').onclick=addPerson;
 function clickTarget(node){const a=node.closest('[data-aid]'),t=node.closest('[data-table-handle]');if(a)editPerson(a.dataset.aid);else if(t)editTable(t.dataset.tableHandle);}

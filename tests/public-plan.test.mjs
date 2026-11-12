@@ -2,22 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { membersAt, occupancy, normalize } from '../core.mjs';
-import { publishedPlan, ACADEMIC_ONLY } from '../public-plan.mjs';
+import { publishedPlan, NO_DINNER_SEAT } from '../public-plan.mjs';
 const plan=publishedPlan();
 const sourceAttending=[12,41,48,54,56,59,61,63,64,66,70,73,75,77,78,79,80,81,84,85,86,87,91,92,95,96,100,101,104,105,108,112,113,114,115,118,119,123,124,131,136,139,140,141,142,146,149,157,158,160,166,169,170,172,175,176,178,179,180,184,185,186,187,189,193,194,197,198,199,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230];
 const person=n=>plan.attendees.find(a=>a.name===n);
 const seat=a=>membersAt(plan,a.tableId).findIndex(b=>b.id===a.id)+1;
 const tableNumber = a=>plan.tables.find(t=>t.id===a.tableId)?.number;
-test('Nov 9 attendance, correcting the two withdrawals and two late responses, plus Shin Hye-sun',()=>{
- assert.equal(sourceAttending.length,99);assert.equal(plan.attendees.length,100);
- assert.deepEqual(plan.attendees.map(a=>Number(a.id.split('-')[1])).sort((a,b)=>a-b),[...sourceAttending.filter(n=>n!==228 && n!==229),127,132,188].sort((a,b)=>a-b));
- assert.equal(new Set(plan.attendees.map(a=>a.id)).size,100);
+test('Nov 9 attendees all retained, plus two additional RSVPs and Shin Hye-sun',()=>{
+ assert.equal(sourceAttending.length,99);assert.equal(plan.attendees.length,102);
+ assert.deepEqual(plan.attendees.map(a=>Number(a.id.split('-')[1])).sort((a,b)=>a-b),[...sourceAttending,127,132,188].sort((a,b)=>a-b));
+ assert.equal(new Set(plan.attendees.map(a=>a.id)).size,102);
 });
-test('99 banquet seats exact, with one academic-only attendee',()=>{
- assert.equal(plan.attendees.filter(a=>a.tableId!==null).length,99);
- assert.deepEqual(plan.attendees.filter(a=>a.tableId===null).map(a=>a.id),ACADEMIC_ONLY);
- for(const t of plan.tables)assert.equal(occupancy(plan,t).delta,0);
- assert.equal(person('신종학').tableId,null);
+test('100 separate dinner assignments, 2 crew without dinner seats, and 2 spare chairs',()=>{
+ assert.equal(plan.attendees.filter(a=>a.tableId!==null).length,100);
+ assert.deepEqual(plan.attendees.filter(a=>a.tableId===null).map(a=>a.id),NO_DINNER_SEAT);
+ assert.equal(plan.tables.reduce((sum,t)=>sum+t.capacity,0),102);
+ assert.equal(plan.tables.filter(t=>occupancy(plan,t).delta<0).length,2);
+ assert.ok(plan.tables.every(t=>occupancy(plan,t).delta<=0));
+ assert.equal(person('신종학').tableId,person('백인채').tableId);assert.equal(seat(person('신종학')),seat(person('백인채'))+1);
 });
 test('requested front-table moves and adjacent seats',()=>{
  const p=person('Prathip Phantumvanit'),b=person('백대일');assert.equal(p.tableId,b.tableId);assert.equal(Math.abs(seat(p)-seat(b)),1);
