@@ -5,7 +5,7 @@ import { numberedLayout } from './table-grid.mjs';
 // Contact details, addresses, response notes, and administrator emails are NOT included.
 export const RELEASE = '2026-11-10-roster-v2';
 export const SOURCE_LABEL = '11월 9일 최종 참석자 명단 + 요청 수정사항 반영';
-export const UPDATED_LABEL = '2026.11.11 테이블 번호 정렬';
+export const UPDATED_LABEL = '2026.11.12 추가 참석자 반영';
 const D = '서울대학교 예방치학교실';
 // First value is the original roster sequence. Two family records remain distinct people.
 const groups = [
@@ -129,8 +129,8 @@ const groups = [
     [186, '이유영'],
     [226, '최상관', '치의신보'],
     [230, '이정후'],
-    [228, '정연호', '제이크 이미지 연구소'],
-    [229, '유부강', '제이크 이미지 연구소']
+    [132, '정진희', '교실원'],
+    [188, '최은재', '교실원']
   ]
 ];
 export const ACADEMIC_ONLY = ['r261109-227'];

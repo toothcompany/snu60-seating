@@ -1,7 +1,7 @@
 import {WIDTH,HEIGHT,copy,normalize,membersAt,occupancy,personSignature,rowsToState,parseCsv,toCsv} from './core.mjs';
 import {fixedHall,dropTableAt} from './table-grid.mjs';
 import {firebaseConfig} from './firebase-config.js';
-import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=grid1';
+import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=1112-rsvp';
 import {SHARED_DOCUMENT,editorRole,googleMemberEmail,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs?v=google-roles1';
 import {editingWindowOpen} from './temporary-access.mjs';
 
@@ -34,7 +34,7 @@ function syncButtons(){
  $('history').hidden=!staff;$('history').disabled=!canSeeHistory()||pending;
  $('login').hidden=Boolean(user);$('login').disabled=!auth||signing||authLoading;
  $('loginRedirect').hidden=Boolean(user)||!redirectOffered;$('loginRedirect').disabled=!auth||signing;
- $('logout').hidden=!user;$('logout').disabled=signing||pending;
+ $('manageAccess').hidden=role!=='admin';$('logout').hidden=!user;$('logout').disabled=signing||pending;
  const accountRole=roleState==='checking'?'권한 확인 중':staff?(role==='admin'?'관리자':'편집자'):'보기 전용';
  $('accountLabel').textContent=user?`${user.email||'로그인 계정'} · ${accountRole}`:'로그인 없이 보기';
 }

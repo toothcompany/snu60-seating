@@ -8,9 +8,9 @@ const sourceAttending=[12,41,48,54,56,59,61,63,64,66,70,73,75,77,78,79,80,81,84,
 const person=n=>plan.attendees.find(a=>a.name===n);
 const seat=a=>membersAt(plan,a.tableId).findIndex(b=>b.id===a.id)+1;
 const tableNumber = a=>plan.tables.find(t=>t.id===a.tableId)?.number;
-test('all 99 attending rows preserved, plus explicitly requested Shin Hye-sun',()=>{
+test('Nov 9 attendance, correcting the two withdrawals and two late responses, plus Shin Hye-sun',()=>{
  assert.equal(sourceAttending.length,99);assert.equal(plan.attendees.length,100);
- assert.deepEqual(plan.attendees.map(a=>Number(a.id.split('-')[1])).sort((a,b)=>a-b),[...sourceAttending,127].sort((a,b)=>a-b));
+ assert.deepEqual(plan.attendees.map(a=>Number(a.id.split('-')[1])).sort((a,b)=>a-b),[...sourceAttending.filter(n=>n!==228 && n!==229),127,132,188].sort((a,b)=>a-b));
  assert.equal(new Set(plan.attendees.map(a=>a.id)).size,100);
 });
 test('99 banquet seats exact, with one academic-only attendee',()=>{
@@ -42,7 +42,7 @@ test('corrections and family identities',()=>{
  assert.ok(person('신명섭'));assert.ok(!person('신영섭'));assert.ok(person('신혜선'));
  assert.equal(plan.attendees.filter(a=>a.affiliation.includes('유한양행')).length,1);assert.equal(person('김문섭').tableId,'t6');
  for(const n of ['유한양행 1','유한양행 2','LG 담당자','아이센랩 2','촬영기사 2'])assert.ok(!person(n));
- for(const n of ['오경희','박훈','이정후','유부강'])assert.ok(person(n));
+ for(const n of ['오경희','박훈','이정후','정진희','최은재'])assert.ok(person(n));
  assert.equal(person('Dilip Prajapati 가족 1').tableId,person('딜립').tableId);
  assert.equal(person('Dilip Prajapati 가족 2').tableId,person('딜립').tableId);
 });
