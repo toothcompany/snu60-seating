@@ -20,8 +20,8 @@ try {
  assert.equal(await page.locator('#people .personRow').count(),100);
  assert.equal(await page.locator('#rosterCount').innerText(),'100');
  assert.equal(await page.locator('.tableDisc.over,.tableDisc.under').count(),0);
- assert.ok((await page.locator('body').innerText()).includes('로그인 없이 보기'));
- assert.equal(await page.locator('#login').count(),0);
+ assert.equal(await page.locator('#login').count(),1);
+ assert.equal(await page.locator('#add').isDisabled(),true);
  await page.locator('#search').fill('신명섭');
  assert.equal(await page.locator('#people .personRow').count(),1);
  assert.ok((await page.locator('#people').innerText()).includes('11번'));

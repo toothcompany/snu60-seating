@@ -2,38 +2,46 @@ import {WIDTH,HEIGHT,copy,normalize,membersAt,occupancy,personSignature,rowsToSt
 import {fixedHall,dropTableAt} from './table-grid.mjs';
 import {firebaseConfig} from './firebase-config.js';
 import {publishedPlan,DISPLAY_NOTES} from './public-plan.mjs?v=grid1';
-import {SHARED_DOCUMENT,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs?v=grid1';
-import {editingWindowOpen,EDITING_END_LABEL,browserVisitor} from './temporary-access.mjs';
+import {SHARED_DOCUMENT,editorRole,googleMemberEmail,mayEdit,startingState,prepareChange,connectionError} from './guest-policy.mjs?v=google-roles1';
+import {editingWindowOpen} from './temporary-access.mjs';
 
 import {pointer,sameHead,trailAt,advanceTrail} from './undo-trail.mjs';
 
 const $=id=>document.getElementById(id);
 const make=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
 const seed=publishedPlan();
-let storage;try{storage=window.localStorage;}catch{}
-// This identifier is only a convenience for history/undo; it is NOT verified identity.
-const user=browserVisitor(storage,()=>crypto.randomUUID());
 let state=startingState(null,seed),db=null,F=null,unsubscribe=null;
 let connected=false,pending=false,existsOnServer=false,zoom=.55,drag=null,serverHead=null,epoch=0,connecting=false;
+let app=null,A=null,auth=null,user=null,role=null,roleState='signed-out',stopMember=null,authEpoch=0,signing=false,authLoading=false,redirectOffered=false;
 let toastTimer,waitTimer,formAction=null;
-const editable=()=>editingWindowOpen()&&mayEdit({user,connected,pending,online:navigator.onLine});
-const journalKey='snu60-undo-v1:'+SHARED_DOCUMENT+':'+user.uid;
+const hasStaff=()=>Boolean(user&&editorRole(role));
+const editable=()=>editingWindowOpen()&&mayEdit({user,role,connected,pending,online:navigator.onLine});
+const canSeeHistory=()=>hasStaff()&&connected&&navigator.onLine;
+const journalKey=()=>user?'snu60-undo-v1:'+SHARED_DOCUMENT+':'+user.uid:null;
 let journal=null;
-try{journal=JSON.parse(sessionStorage.getItem(journalKey));}catch{}
-const undoItems=()=>trailAt(journal,serverHead,user.uid);
-function keepJournal(next){journal=next;try{sessionStorage.setItem(journalKey,JSON.stringify(next));}catch{}}
+function loadJournal(){journal=null;try{const k=journalKey();if(k)journal=JSON.parse(sessionStorage.getItem(k));}catch{}}
+const undoItems=()=>hasStaff()?trailAt(journal,serverHead,user.uid):[];
+function keepJournal(next){journal=next;try{const k=journalKey();if(k)sessionStorage.setItem(k,JSON.stringify(next));}catch{}}
 function status(text,kind=''){ $('status').textContent=text;$('status').className='status '+kind; }
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,8000);}
 function syncButtons(){
- document.querySelectorAll('[data-edit]').forEach(b=>b.disabled=!editable());
+ const staff=hasStaff(),edit=editable();document.body.classList.toggle('canEdit',edit);
+ $('editTools').hidden=!staff||!editingWindowOpen();$('editHelp').hidden=!edit;$('unassigned').hidden=!edit;
+ document.querySelectorAll('[data-edit]').forEach(b=>b.disabled=!edit);
  const steps=undoItems().length; $('undo').disabled=!editable()||!steps;
  $('undo').title=steps?`내 변경을 한 단계 되돌립니다 (남은 ${steps}단계 · ⌘Z / Ctrl+Z)`:'이 브라우저에서 연속으로 저장한 변경이 있을 때 사용할 수 있습니다.';$('publish').disabled=!editable()||existsOnServer;
- $('reconnect').disabled=pending||connecting;$('history').disabled=!connected;
- $('accountLabel').textContent=editingWindowOpen()?'로그인 없이 편집 · 브라우저 '+user.uid.slice(-6):'공동 편집 종료 · 보기 전용';
+ $('reconnect').hidden=connected&&Boolean(auth)&&roleState!=='error';$('reconnect').disabled=pending||connecting||authLoading;
+ $('history').hidden=!staff;$('history').disabled=!canSeeHistory()||pending;
+ $('login').hidden=Boolean(user);$('login').disabled=!auth||signing||authLoading;
+ $('loginRedirect').hidden=Boolean(user)||!redirectOffered;$('loginRedirect').disabled=!auth||signing;
+ $('logout').hidden=!user;$('logout').disabled=signing||pending;
+ const accountRole=roleState==='checking'?'권한 확인 중':staff?(role==='admin'?'관리자':'편집자'):'보기 전용';
+ $('accountLabel').textContent=user?`${user.email||'로그인 계정'} · ${accountRole}`:'로그인 없이 보기';
 }
 function connectionStatus(){
- if(!editingWindowOpen()){status('임시 공동 편집이 종료되었습니다. 보기·백업만 가능합니다.','wait');return;}
- status(existsOnServer?`로그인 없이 공동 편집 연결 완료 · 변경 ${state.rev}`:'연결 완료 · 초기 배치 공동 저장을 누르거나 자리를 옮기면 저장됩니다.','ok');
+ if(!editingWindowOpen()){status('공동 편집 기간이 끝났습니다. 좌석표를 보거나 저장할 수 있습니다.','wait');return;}
+ const display=existsOnServer?`공동 좌석표 · 변경 ${state.rev}`:'기본 좌석 배치';
+ status(hasStaff()?`${display} · 편집할 수 있습니다.`:`${display} · 보기 전용`,'ok');
 }
 function setZoom(v){zoom=Math.max(.2,Math.min(1.5,v));$('world').style.transform=`scale(${zoom})`;$('sizer').style.width=WIDTH*zoom+'px';$('sizer').style.height=HEIGHT*zoom+'px';$('zoomLabel').textContent=Math.round(zoom*100)+'%';}
 function fit(){setZoom(($('viewport').clientWidth-16)/WIDTH);}
@@ -65,13 +73,15 @@ function renderPeople(){
  if(!list.length)$('people').append(make('p','muted','조건에 맞는 참석자가 없습니다.'));
 }
 async function mutate(operation,label,kind='edit'){
- if(!editable()){toast(editingWindowOpen()?'공동 저장이 연결되지 않았습니다. 저장 설정 안내의 규칙을 게시해 주세요.':'임시 공동 편집 기간이 끝났습니다.');return false;}
+ if(!editable()){toast(editingWindowOpen()?'편집하려면 승인된 계정과 서버 연결이 필요합니다.':'공동 편집 기간이 끝났습니다.');return false;}
+ const actor=user.uid,session=authEpoch;
  pending=true;syncButtons();status('공동 저장 중… 서버의 확인 전에는 창을 닫지 마세요.','wait');
  waitTimer=setTimeout(()=>{if(pending)status('서버 응답 확인 중 — 아직 저장 완료가 아닙니다.','wait');},12000);
  try{
-  const actor=user.uid,ref=F.doc(db,SHARED_DOCUMENT),historyRef=F.doc(F.collection(ref,'history'));
+  const ref=F.doc(db,SHARED_DOCUMENT),historyRef=F.doc(F.collection(ref,'history'));
   const result=await F.runTransaction(db,async tx=>{
    const snapshot=await tx.get(ref),previous=snapshot.exists()?snapshot.data():null,base=startingState(previous,seed);
+   if(kind==='initial'&&snapshot.exists())throw Error('이미 저장된 좌석표가 있습니다. 기존 배치를 유지합니다.');
    let op=operation;
    if(kind==='undo'){
     if(!sameHead(pointer(previous),operation.head)||previous.updatedBy!==actor)throw Error('다른 변경이 먼저 저장되어 되돌릴 수 없습니다. 최신 배치를 유지합니다.');
@@ -80,17 +90,19 @@ async function mutate(operation,label,kind='edit'){
     op={type:'replace',expectedRev:previous.rev,value:entry.before};
    }
    const change=prepareChange(base,op,previous??base);
+   if(session!==authEpoch||user?.uid!==actor||!hasStaff()||!editingWindowOpen())throw Error('편집 권한이 바뀌었습니다. 좌석표를 다시 확인해 주세요.');
    const head={rev:change.next.rev,changeId:historyRef.id,lastAction:label,updatedBy:actor};
    tx.set(ref,{...change.next,updatedAt:F.serverTimestamp(),updatedBy:actor,lastAction:label.slice(0,160),changeId:historyRef.id});
    tx.set(historyRef,{before:change.before,rev:change.next.rev,action:label.slice(0,160),by:actor,at:F.serverTimestamp()});
    return {...change,previous,head};
   },{maxAttempts:3});
+  if(session!==authEpoch||user?.uid!==actor||!hasStaff())return false;
   keepJournal(advanceTrail(journal,result.previous,result.head,actor,kind));
   if(state.rev<=result.next.rev){state=result.next;serverHead=result.head;}existsOnServer=true;
   if(undoItems().length)armBack();
   if(kind==='undo')toast('바로 전 배치로 되돌리고 공동 저장했습니다.');
   status(`공동 저장 완료 · 변경 ${result.next.rev} · ${new Date().toLocaleTimeString('ko-KR')}`,'ok');return true;
- }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(editingWindowOpen()?connectionError(error):'임시 편집 기한이 지나 서버가 저장을 차단했습니다.');return false;}
+ }catch(error){status('저장 실패 — 이 변경은 서버에 반영되지 않았습니다.','error');toast(editingWindowOpen()?connectionError(error):'공동 편집 기간이 끝났습니다.');return false;}
  finally{clearTimeout(waitTimer);pending=false;render();}
 }
 function openEditor(title){$('editorTitle').textContent=title;$('editorFields').replaceChildren();$('remove').hidden=true;$('save').hidden=!editable();$('editor').showModal();}
@@ -223,12 +235,13 @@ $('file').onchange=async()=>{
  }catch(error){toast(connectionError(error));}
 };
 $('history').onclick=async()=>{
- if(!connected)return;
- try{const q=F.query(F.collection(db,SHARED_DOCUMENT,'history'),F.orderBy('rev','desc'),F.limit(30)),snaps=await F.getDocs(q);$('historyList').replaceChildren();
-  snaps.forEach(snapshot=>{const h=snapshot.data(),e=make('div','historyEntry',`#${h.rev} · ${h.action}`);e.append(make('small','',`${h.at?.toDate?.().toLocaleString('ko-KR')||'시간 확인 중'} · ${h.by===user.uid?'이 브라우저':'방문자 '+String(h.by).slice(-6)}`));
-   const b=make('button','','이 변경 직전으로 복원');b.type='button';b.disabled=!editable();b.onclick=async()=>{const rev=state.rev;if(confirm(`변경 #${h.rev} 직전의 전체 배치로 되돌릴까요? 현재 배치는 새 이력으로 남습니다.`)&&await mutate({type:'replace',expectedRev:rev,value:h.before},'이전 배치 복원'))$('historyDialog').close();};e.append(b);$('historyList').append(e);
+ if(!canSeeHistory()||pending)return;const session=authEpoch;
+ try{const q=F.query(F.collection(db,SHARED_DOCUMENT,'history'),F.orderBy('rev','desc'),F.limit(30)),snaps=await F.getDocs(q);
+  if(session!==authEpoch||!canSeeHistory())return;$('historyList').replaceChildren();
+  snaps.forEach(snapshot=>{const h=snapshot.data(),e=make('div','historyEntry',`#${h.rev} · ${h.action}`);e.append(make('small','',`${h.at?.toDate?.().toLocaleString('ko-KR')||'시간 확인 중'} · ${h.by===user.uid?'내 계정':String(h.by).startsWith('guest-')?'이전 공개 편집':'다른 운영진'}`));
+   const b=make('button','','이 변경 직전으로 복원');b.type='button';b.disabled=!editable();b.onclick=async()=>{if(session!==authEpoch||!editable())return;const rev=state.rev;if(confirm(`변경 #${h.rev} 직전의 전체 배치로 되돌릴까요? 현재 배치는 새 이력으로 남습니다.`)&&await mutate({type:'replace',expectedRev:rev,value:h.before},'이전 배치 복원'))$('historyDialog').close();};e.append(b);$('historyList').append(e);
   });if(snaps.empty)$('historyList').append(make('p','muted','저장된 이력이 없습니다.'));$('historyDialog').showModal();
- }catch(error){toast(connectionError(error));}
+ }catch(error){if(session===authEpoch&&canSeeHistory())toast(connectionError(error));}
 };$('historyClose').onclick=()=>$('historyDialog').close();
 
 function watchShared(){
@@ -244,22 +257,80 @@ function watchShared(){
 }
 function connect(){
  if(connecting||pending||!db||!F)return;
- status('로그인 없이 공동 저장소에 연결 중…','wait');watchShared();
+ status('최신 좌석표를 확인하고 있습니다.','wait');watchShared();
 }
-$('reconnect').onclick=()=>{if(db)connect();else initialize();};
+$('reconnect').onclick=()=>{if(!db){void initialize();return;}connect();if(!auth)void startAuth();else if(user)void updateUser(auth.currentUser);};
 window.addEventListener('offline',()=>{connected=false;finishDrag();status('오프라인 — 공동 저장이 불가능하므로 편집을 잠갔습니다.','error');render();});
 window.addEventListener('online',()=>{if(!pending)connect();});
 window.addEventListener('beforeunload',e=>{if(pending){e.preventDefault();e.returnValue='';}});
 for(const note of DISPLAY_NOTES)$('notesList').append(make('li','',note));
-$('notesList').append(make('li','',`임시 공개 편집 종료: ${EDITING_END_LABEL}. 서버 규칙에도 같은 기한이 적용됩니다. 종료 후에는 보기·백업만 가능하며 데이터가 자동 삭제되는 것은 아닙니다.`));
 let previouslyOpen=editingWindowOpen();
-setInterval(()=>{const open=editingWindowOpen();if(open!==previouslyOpen){previouslyOpen=open;finishDrag();if(!pending)connectionStatus();render();}},10000);
+setInterval(()=>{const open=editingWindowOpen();if(open!==previouslyOpen){previouslyOpen=open;finishDrag();if(!open&&$('editor').open)$('editor').close();if(!pending&&connected)connectionStatus();render();}},10000);
 fit();render();
+const sdk='https://www.gstatic.com/firebasejs/13.2.0/';
+function clearPrivilegedUI(){
+ finishDrag();formAction=null;
+ for(const id of ['historyDialog','backDialog','editor'])if($(id).open)$(id).close();
+ $('historyList').replaceChildren();$('editorFields').replaceChildren();$('remove').onclick=null;
+}
+function setRole(value,phase,message){
+ const had=hasStaff();role=editorRole(value)?value:null;roleState=phase;
+ if(had&&!hasStaff())clearPrivilegedUI();$('authMessage').textContent=message;
+ if(connected&&!pending)connectionStatus();syncButtons();
+}
+async function updateUser(account){
+ const token=++authEpoch;stopMember?.();stopMember=null;role=null;
+ clearPrivilegedUI();user=account&&!account.isAnonymous?account:null;loadJournal();
+ if(!user){setRole(null,'signed-out','');return;}
+ redirectOffered=false;setRole(null,'checking','Google 계정의 편집 권한을 확인하고 있습니다.');
+ try{
+  const result=await A.getIdTokenResult(account);if(token!==authEpoch)return;
+  const email=googleMemberEmail(account,result.claims);
+  if(!email){setRole(null,'none','인증된 Google 계정으로 로그인해야 편집 권한을 확인할 수 있습니다.');return;}
+  stopMember=F.onSnapshot(F.doc(db,'members',email),{includeMetadataChanges:true},snap=>{
+   if(token!==authEpoch)return;
+   if(snap.metadata.fromCache||snap.metadata.hasPendingWrites){setRole(null,'checking','서버에서 계정 권한을 확인하고 있습니다.');return;}
+   const r=snap.exists()?snap.data()?.role:null;
+   setRole(r,'ready',editorRole(r)?'':r==='viewer'?'이 계정은 조회 권한이 있습니다.':'이 계정은 조회만 가능합니다. 편집이 필요하면 준비위원회에 계정 승인을 요청해 주세요.');
+  },err=>{if(token===authEpoch)setRole(null,'error','계정 권한을 확인하지 못했습니다. '+connectionError(err));});
+ }catch(err){if(token===authEpoch)setRole(null,'error','계정 권한을 확인하지 못했습니다. '+connectionError(err));}
+}
+const redirectKey='snu60-google-redirect-pending';
+function markRedirect(flag){try{if(flag)sessionStorage.setItem(redirectKey,'1');else sessionStorage.removeItem(redirectKey);}catch{}}
+async function requestLogin(useRedirect){
+ if(!auth||user||signing)return;signing=true;$('authMessage').textContent='';syncButtons();
+ try{
+  const provider=new A.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});
+  if(useRedirect){markRedirect(true);await A.signInWithRedirect(auth,provider);}
+  else await A.signInWithPopup(auth,provider);
+ }catch(err){
+  if(useRedirect)markRedirect(false);
+  redirectOffered=['auth/popup-blocked','auth/popup-closed-by-user','auth/operation-not-supported-in-this-environment','auth/web-storage-unsupported'].includes(err?.code);
+  $('authMessage').textContent=connectionError(err);
+ }finally{signing=false;syncButtons();}
+}
+$('login').onclick=()=>void requestLogin(false);$('loginRedirect').onclick=()=>void requestLogin(true);
+$('logout').onclick=async()=>{
+ if(!auth||!user||pending||signing)return;
+ signing=true;await updateUser(null);syncButtons();
+ try{await A.signOut(auth);}catch(err){await updateUser(auth.currentUser);$('authMessage').textContent=connectionError(err);}
+ finally{signing=false;syncButtons();}
+};
+async function startAuth(){
+ if(auth||authLoading||!app)return;authLoading=true;syncButtons();
+ try{
+  A=await import(sdk+'firebase-auth.js');auth=A.getAuth(app);
+  A.onAuthStateChanged(auth,u=>void updateUser(u),err=>{void updateUser(null);$('authMessage').textContent=connectionError(err);});
+  let returning=false;try{returning=sessionStorage.getItem(redirectKey)==='1';}catch{}
+  if(returning){markRedirect(false);try{const result=await A.getRedirectResult(auth);if(!result&&!auth.currentUser)$('authMessage').textContent='로그인이 완료되지 않았습니다. Safari 또는 Chrome에서 페이지를 열고 다시 시도해 주세요.';}catch(err){$('authMessage').textContent=connectionError(err);}}
+ }catch(err){auth=null;$('authMessage').textContent='로그인 도구를 불러오지 못했습니다. 좌석표는 계속 볼 수 있습니다. 연결을 다시 시도해 주세요.';}
+ finally{authLoading=false;syncButtons();}
+}
 async function initialize(){
  if(connecting)return;connecting=true;syncButtons();
- try{const base='https://www.gstatic.com/firebasejs/13.2.0/';const [appModule,storeModule]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-firestore.js')]);
-  F=storeModule;const app=appModule.getApps().length?appModule.getApp():appModule.initializeApp(firebaseConfig);db=F.getFirestore(app);
-  connecting=false;connect();
+ try{const [appModule,storeModule]=await Promise.all([import(sdk+'firebase-app.js'),import(sdk+'firebase-firestore.js')]);
+  F=storeModule;app=appModule.getApps().length?appModule.getApp():appModule.initializeApp(firebaseConfig);db=F.getFirestore(app);
+  connecting=false;connect();void startAuth();
  }catch(error){status('연결 도구를 불러오지 못했습니다. 초기 배치 보기만 가능하며 저장은 되지 않습니다.','error');toast(connectionError(error));}
  finally{connecting=false;syncButtons();}
 }

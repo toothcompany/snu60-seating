@@ -7,8 +7,10 @@ on:
       - 'public*'
       - 'editor*'
       - 'style.css'
-      - 'core.mjs'
-      - 'tests/browser-public.mjs'
+      - '*.mjs'
+      - 'shared-editor.js'
+      - 'firebase-config.js'
+      - 'tests/browser-*.mjs'
       - '.github/workflows/public-ui.yml'
   workflow_dispatch:
 permissions:

@@ -1,25 +1,16 @@
-# 임시 공개 공동 편집
+# 60주년 좌석표 편집 권한 (2026-11-12)
 
-The owner explicitly approved login-free viewing AND saving for this week's event. The main page now uses no Firebase Authentication SDK: visitors do not press login, enter credentials or require the Anonymous provider to be enabled. A random browser label is used only for convenient history grouping and undo. It is client-supplied and NOT an authenticated identity, secret or access control.
+행사 좌석표의 현재 문서는 `sharedPlans/snu60`이다. 기존 문서와 변경 기록을 그대로 사용한다. 가입, 데이터 이전, 초기화, 명단 재등록은 필요 없다.
 
-## One console step remains
+- 참석자: 로그인 없이 최신 좌석표, 이름·소속 검색, 인쇄 및 공개 명단 내보내기를 사용할 수 있다.
+- 미등록 Google 계정 또는 viewer: 참석자와 같은 조회 권한만 있다.
+- editor/admin: Google 로그인(검증된 이메일) + Firestore `members/{로그인 이메일}`의 해당 역할이 확인되어야 좌석·정원·명단을 수정하거나 이력을 조회·복원할 수 있다. 신규 변경에는 Firebase 사용자 UID가 기록되며 Google 이메일은 공개 배치에 쓰지 않는다. 과거의 방문자 표식으로 현재 권한을 얻을 수 없다.
+- 기한: 한국시간 2026-11-16 00:00부터 공동 좌석표에 대한 쓰기를 서버에서도 차단한다. 조회를 위한 공개 링크는 그대로 유지한다.
 
-Open `setup-shared.html`, copy the complete current `firestore.rules`, paste it into Firebase → Firestore → Rules, and Publish. Updating GitHub does not publish production Firebase rules. Do not remove existing Google login settings or members documents; the legacy private editor still uses them.
+## 운영 서버에 적용
 
-The production deadline for public writes is **2026-11-16 00:00 Asia/Seoul**, equivalent to **2026-11-15 15:00 UTC**. The browser disables editing at this time and, more importantly, the published Firestore rules reject writes using server request.time. No scheduled job or future manual action is needed to enforce this cutoff.
+GitHub Pages를 배포해도 Firebase 서버의 Firestore 규칙은 바뀌지 않는다. 운영자가 [권한 설정 안내](https://toothcompany.github.io/snu60-seating/setup-shared.html)에서 규칙 전체를 복사해 [Firebase 규칙 편집기](https://console.firebase.google.com/project/snu60-seating/firestore/rules)에서 게시한다. 이전에 전체 공개 편집 규칙을 게시했다면 반드시 교체한다. 이전 명단과 이력은 삭제하거나 덮어쓰지 않는다.
 
-## Boundaries and residual risks
+설정 안내의 ‘서버 규칙 확인’은 좌석표에 쓰지 않는다. 서버가 이번 버전에만 있는 비어 있는 확인 경로를 조회하도록 허용하고 비공개 대조 경로는 거절하는지 확인한다. 이 점검은 콘솔에 표시된 규칙 원문을 검토하는 기능은 아니다.
 
-- Only `sharedPlans/snu60` and the mandatory paired history records accept unauthenticated writes before the deadline.
-- Document deletion is blocked. Each update increments revision and atomically writes append-only history with the genuine previous state.
-- Anyone can still make unwanted but schema-valid edits (including removing attendees from the state). Revision checks, immutable history and expiry do not prevent malicious editing, identity spoofing, copied names or usage/quota abuse.
-- Names, affiliations and seating are intentionally public by the owner's request. Do not put phone numbers, addresses, emails or private notes into public data.
-- `members`, the private `events/snu60` document and legacy history keep their original role-based protections. Other plan IDs are not opened.
-- The published seed is shown before a server plan exists; page load does not overwrite an existing plan. First explicit save or edit stores it.
-- After the deadline, reading and backup remain possible. Public copies, the repository's published seed and existing data are not automatically deleted. The owner can remove public data separately after the event.
-
-## Verification
-
-Unit tests cover model behavior, exact Korean-time cutoff, browser labels and absence of Auth SDK use. Emulator tests use open/expired deadline fixtures to verify unauthenticated paired saves, immutable history, stale revision rejection, private-data isolation and server-side expiry. Their success does not prove production rules were published.
-
-Before relying on the live plan: publish rules, see `공동 저장 완료`, reload, and open another browser to check the same update. JSON backups remain recommended. Offline edits are blocked rather than falsely reported saved.
+새 운영진은 Firebase 콘솔의 기존 members 컬렉션에 로그인 이메일을 문서 ID로, role을 문자열 editor로 등록한다. 등록되어 있는 운영진은 다시 만들 필요가 없다. 별도 관리자용 editor.html/events 문서는 이번 공동 배치와 다르다.

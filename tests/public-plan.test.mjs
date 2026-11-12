@@ -54,7 +54,7 @@ test('public payload contains only seating information, never contact or auth fi
 test('public collaboration is independent of the legacy authenticated editor',()=>{
  const index=readFileSync(new URL('../index.html',import.meta.url),'utf8');
  assert.ok(index.includes('./shared-editor.js'));assert.ok(!index.includes('src="./app.js"'));
- assert.ok(index.includes('./setup-shared.html'));assert.ok(index.includes('noindex,nofollow'));
+ assert.ok(index.includes('noindex,nofollow'));
  const legacy=readFileSync(new URL('../editor.html',import.meta.url),'utf8');
  assert.ok(legacy.includes('./app.js'));
 });
